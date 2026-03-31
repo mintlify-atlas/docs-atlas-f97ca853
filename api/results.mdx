@@ -1,0 +1,258 @@
+---
+title: "Results & Chat"
+description: "Retrieve cached analysis results, list active sessions, serve plot files, and chat with the AI about findings."
+---
+
+After running [POST /analyze](/api/analyze), results are stored in the session and can be retrieved or discussed without re-running the analysis.
+
+## GET /results/{session_id}
+
+Returns the cached analysis results object for a session. The structure is identical to the response from [POST /analyze](/api/analyze).
+
+### Path parameter
+
+<ParamField path="session_id" type="string" required>
+  UUID of a session that has completed analysis.
+</ParamField>
+
+### Response
+
+Returns the full results object. See [POST /analyze](/api/analyze) for a complete field reference.
+
+Key top-level fields:
+
+<ResponseField name="outcome_variable" type="string">
+  The outcome column used for the analysis.
+</ResponseField>
+
+<ResponseField name="outcome_type" type="string">
+  Inferred outcome type: `"continuous"`, `"binary"`, or `"count"`.
+</ResponseField>
+
+<ResponseField name="total_specs" type="integer">
+  Total number of model specifications evaluated.
+</ResponseField>
+
+<ResponseField name="significant_specs" type="integer">
+  Number of specifications where the predictor effect was statistically significant after Benjamini-Hochberg FDR correction.
+</ResponseField>
+
+<ResponseField name="robustness_pct" type="float">
+  `significant_specs / total_specs × 100`.
+</ResponseField>
+
+<ResponseField name="regressions" type="array">
+  All regression specification results.
+</ResponseField>
+
+<ResponseField name="classifier_results" type="array">
+  All classifier specification results.
+</ResponseField>
+
+<ResponseField name="plot_map" type="object">
+  Map of `spec_id` → PNG filename for regression plots.
+</ResponseField>
+
+<ResponseField name="distribution_plot_map" type="object">
+  Map of variable name → PNG filename for distribution plots.
+</ResponseField>
+
+<ResponseField name="session_id" type="string">
+  Echoed session UUID.
+</ResponseField>
+
+### Error responses
+
+```json
+{"error": "Session not found"}
+{"error": "No results yet"}
+```
+
+### Example
+
+```bash
+curl http://localhost:8000/results/3fa85f64-5717-4562-b3fc-2c963f66afa6
+```
+
+```json
+{
+  "outcome_variable": "Outcome",
+  "outcome_type": "binary",
+  "total_specs": 24,
+  "significant_specs": 19,
+  "robustness_pct": 79.17,
+  "mean_effect_size": 0.032,
+  "regressions": ["..."],
+  "classifier_results": ["..."],
+  "classifier_summary": {
+    "total_specs": 6,
+    "best_classifier": "GradientBoosting",
+    "best_accuracy": 0.784,
+    "mean_accuracy": 0.751,
+    "mean_auc": 0.812
+  },
+  "plot_map": {
+    "spec_001": "forest_spec_001.png"
+  },
+  "dag_map": {
+    "spec_001": "dag_spec_001.png"
+  },
+  "distribution_plot_map": {
+    "Outcome": "dist_Outcome.png",
+    "Glucose": "dist_Glucose.png"
+  },
+  "distribution_stats": ["..."],
+  "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+}
+```
+
+---
+
+## GET /sessions
+
+Returns a summary of all active sessions in the current server process.
+
+### Response
+
+A JSON object mapping each `session_id` to a summary object.
+
+<ResponseField name="{session_id}" type="object">
+  Per-session state summary.
+
+  <Expandable title="session summary properties">
+    <ResponseField name="has_results" type="boolean">
+      `true` if analysis results are cached for this session.
+    </ResponseField>
+    <ResponseField name="clf_count" type="integer">
+      Number of classifier result objects in the cached results (0 if no results).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/sessions
+```
+
+```json
+{
+  "3fa85f64-5717-4562-b3fc-2c963f66afa6": {
+    "has_results": true,
+    "clf_count": 6
+  },
+  "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d": {
+    "has_results": false,
+    "clf_count": 0
+  }
+}
+```
+
+<Note>
+  Session state is in-memory only. All sessions are lost when the server restarts.
+</Note>
+
+---
+
+## GET /plots/{filename}
+
+Serves generated plot PNG files as static assets.
+
+### Path parameter
+
+<ParamField path="filename" type="string" required>
+  Plot filename as returned in `plot_map`, `dag_map`, `classifier_plot_map`, `classifier_dag_map`, or `distribution_plot_map` from the analysis results.
+</ParamField>
+
+### Response
+
+The raw PNG image file with `Content-Type: image/png`.
+
+### Example
+
+```bash
+curl http://localhost:8000/plots/forest_spec_001.png --output plot.png
+```
+
+<Tip>
+  Use the `distribution_plot_map` keys to build distribution plot URLs for each variable, and `plot_map` keys to build forest plot URLs for each regression specification.
+</Tip>
+
+---
+
+## POST /results-chat-stream
+
+Stream an AI conversation about the analysis results. The AI has access to the full results object and can answer questions about robustness, significant predictors, model assumptions, effect sizes, and classifier performance.
+
+**Content-Type of response:** `application/x-ndjson`
+
+<Warning>
+  This endpoint requires that analysis has already been run for the session. It returns an error event if no results exist.
+</Warning>
+
+### Request
+
+<ParamField body="session_id" type="string" required>
+  UUID of a session with cached analysis results.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The user question or comment about the analysis results.
+</ParamField>
+
+<ParamField body="chat_history" type="array" required>
+  Full conversation history. Pass `[]` for the first message.
+
+  <Expandable title="chat history item properties">
+    <ResponseField name="role" type="string">
+      Speaker role: `"user"` or `"assistant"`.
+    </ResponseField>
+    <ResponseField name="content" type="string">
+      Message text.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Streamed events
+
+**Chunk events:**
+
+```json
+{"type": "chunk", "content": "Across all 24 specifications"}
+{"type": "chunk", "content": ", the effect was significant in 79% of cases."}
+```
+
+**Final event:**
+
+<ResponseField name="type" type="string">
+  Always `"final"`.
+</ResponseField>
+
+<ResponseField name="response" type="string">
+  The complete AI response text.
+</ResponseField>
+
+**Error events:**
+
+```json
+{"type": "error", "error": "Session not found"}
+{"type": "error", "error": "No analysis results available"}
+```
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/results-chat-stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "message": "How robust is the Glucose effect across all specifications?",
+    "chat_history": []
+  }'
+```
+
+```json
+{"type": "chunk", "content": "The Glucose predictor was significant"}
+{"type": "chunk", "content": " in 19 out of 24 specifications (79.2%)."}
+{"type": "final", "response": "The Glucose predictor was significant in 19 out of 24 specifications (79.2%). This indicates a highly robust effect..."}
+```

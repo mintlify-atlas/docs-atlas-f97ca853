@@ -1,0 +1,155 @@
+---
+title: 'Variable Definition'
+description: 'Use the AI chat to clean, rename, retype, and transform your variables before defining your study intent. All changes are tracked and reversible.'
+---
+
+The Variable Definition stage gives you a conversational interface to inspect and prepare your data. The AI assistant can rename columns, change inferred distribution types, filter rows, remove outliers, log-transform or standardise variables, impute missing values, and drop columns — all before a single model is fit.
+
+<Note>
+  The variable panel on the right shows the full profile for every column: dtype, unique count, missing percentage, distribution miniature, and a skewness warning icon when `|skewness| > 1.0`. No need to ask the AI for statistics that are already visible there.
+</Note>
+
+## The variable panel
+
+The right-hand panel has two tabs:
+
+- **Variables** — a table with Name, Type, Dist (histogram miniature), Missing %, and a skewness flag per column. Click a variable name to rename it inline.
+- **Modifications** — a log of every change made so far (renames, type changes, and data transforms), with the source (AI or manual) and a revert button.
+
+You can drag the resize handle between the chat and the panel to adjust the split.
+
+## What you can ask the AI to do
+
+The AI assistant in this stage follows the `STAGE_VARIABLE_CHAT` instructions and supports any of the following operations. When you confirm or request a change, the AI applies it immediately and the variable panel updates in real time.
+
+<AccordionGroup>
+  <Accordion title="Rename a variable">
+    Ask in plain English:
+
+    ```text
+    Rename "plas" to "plasma_glucose"
+    ```
+
+    The AI will confirm and emit a `variable_edits` block that renames the column in both the profile and the underlying dataframe.
+  </Accordion>
+
+  <Accordion title="Change distribution type">
+    Valid distribution types are `continuous`, `binary`, `count/ordinal`, and `categorical`. Use this when the AI's inference is wrong — for example, a 0/1 integer column that should be `binary` but was inferred as `continuous`:
+
+    ```text
+    Change "diabetes_diagnosis" to binary
+    ```
+  </Accordion>
+
+  <Accordion title="Filter rows">
+    Remove rows that do not meet a condition:
+
+    ```text
+    Filter out rows where age is less than 18
+    ```
+
+    The AI generates and executes:
+
+    ```python
+    df = df[df['age'] >= 18]
+    ```
+  </Accordion>
+
+  <Accordion title="Remove outliers">
+    Flag and remove extreme values using z-score or IQR methods:
+
+    ```text
+    Remove outliers from bmi beyond 3 standard deviations
+    ```
+
+    The AI generates:
+
+    ```python
+    df = df[(np.abs(stats.zscore(df['bmi'].dropna())) < 3).reindex(df.index, fill_value=True)]
+    ```
+  </Accordion>
+
+  <Accordion title="Log-transform a variable">
+    Useful for right-skewed continuous variables. The AI creates a new column rather than overwriting the original:
+
+    ```text
+    Log-transform income and call it log_income
+    ```
+
+    The AI generates:
+
+    ```python
+    df['log_income'] = np.log1p(df['income'])
+    ```
+  </Accordion>
+
+  <Accordion title="Standardise (z-score) a variable">
+    ```text
+    Standardise age to mean 0 and standard deviation 1
+    ```
+
+    The AI generates:
+
+    ```python
+    df['age_z'] = (df['age'] - df['age'].mean()) / df['age'].std()
+    ```
+  </Accordion>
+
+  <Accordion title="Drop a column">
+    ```text
+    Drop the "patient_id" column
+    ```
+
+    The AI generates:
+
+    ```python
+    df = df.drop(columns=['patient_id'])
+    ```
+  </Accordion>
+
+  <Accordion title="Impute missing values">
+    ```text
+    Impute missing bmi values with the median
+    ```
+
+    The AI generates:
+
+    ```python
+    df['bmi'] = df['bmi'].fillna(df['bmi'].median())
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Data transforms are applied to the active session in memory. Omniverse does not persist data to disk — if the page is reloaded or the backend restarts, all transforms are lost and you will need to re-upload your CSV.
+</Warning>
+
+## Modification history and reverting changes
+
+Every change — whether made by the AI or manually by clicking a variable name — is recorded in the **Modifications** tab. Each entry shows:
+
+- The type of change: rename, retype, or transform
+- The before and after values (or a human-readable description for transforms)
+- Whether it was AI-suggested or manual
+- A revert button (×) that appears on hover
+
+Clicking the revert button calls the `/revert-modification` endpoint, which:
+
+1. Removes the targeted modification from the session history
+2. Rebuilds the dataframe from the original uploaded CSV
+3. Replays all remaining modifications in order
+
+This means reverting any single step is safe — subsequent changes are re-applied automatically so you do not lose unrelated work.
+
+## Valid distribution types
+
+| Type | When to use |
+|---|---|
+| `continuous` | Numeric variable with many unique values (measurements, scores, concentrations) |
+| `binary` | Exactly two possible values — typically 0/1 or yes/no |
+| `count/ordinal` | Integers with fewer than 10 unique values (Likert scales, event counts) |
+| `categorical` | Non-numeric or string variable representing group membership |
+
+## When you are done
+
+Click **Continue** in the header bar when your variables look correct. This advances you to the [Study Intent](/guides/study-intent) stage. You can return to the variable panel from the intent screen to review the profile, but data transforms are locked once analysis begins.

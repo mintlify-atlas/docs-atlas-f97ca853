@@ -1,0 +1,137 @@
+---
+title: 'FDR correction'
+description: 'How Omniverse applies Benjamini-Hochberg FDR correction across all model specifications simultaneously to control false discovery rate.'
+keywords: ['FDR', 'false discovery rate', 'Benjamini-Hochberg', 'multiple testing', 'p-value correction', 'multiplicity']
+---
+
+Running a multiverse analysis produces hundreds of p-values. Without correction, false positives accumulate rapidly. Omniverse applies the Benjamini-Hochberg (BH) procedure across all specifications simultaneously to control the false discovery rate.
+
+## Why FDR correction is essential here
+
+At the conventional α = 0.05 threshold, roughly 1 in 20 true-null tests will appear significant by chance. In a typical Omniverse run:
+
+```
+300 model specifications × 0.05 = 15 spurious "significant" results expected
+```
+
+If robustness were judged by raw p-values, a completely null effect could appear significant in 15 specifications and accumulate a robustness % of 5%. FDR correction penalizes for the number of tests conducted so that the expected proportion of false discoveries among all reported significant results is controlled at 5%.
+
+<Note>
+FDR correction is applied across **all p-values from all specifications simultaneously**, not per-model-family or per-covariate-set. The correction is a single global pass over the entire result list.
+</Note>
+
+## The Benjamini-Hochberg procedure
+
+The BH procedure is a step-up method that adjusts each p-value based on its rank among all tests.
+
+<Steps>
+  <Step title="Sort p-values in ascending order">
+    All `n` p-values are collected from every specification and sorted from smallest to largest. Each p-value retains its original index so results can be mapped back after correction.
+  </Step>
+  <Step title="Compute corrected p-value for each rank">
+    For the p-value at rank `k` (1-indexed) out of `n` total tests:
+
+    ```
+    corrected_p = min(p × n / k, 1.0)
+    ```
+
+    The multiplier `n / k` is always ≥ 1, so corrected values are always at least as large as raw p-values. Values are capped at 1.0.
+  </Step>
+  <Step title="Enforce monotonicity (step-up)">
+    BH requires that corrected p-values be non-decreasing in rank order. Starting from the largest rank and working backwards, each corrected p-value is set to the minimum of itself and the corrected p-value immediately to its right:
+
+    ```
+    corrected[i] = min(corrected[i], corrected[i+1])
+    ```
+
+    This step-up pass ensures that a small corrected p-value at a high rank cannot exceed a smaller corrected p-value at a lower rank.
+  </Step>
+</Steps>
+
+## Implementation
+
+The exact code from `analysis_engine.py`:
+
+```python
+def apply_fdr_correction(p_values: list[float]) -> list[float]:
+    """Apply Benjamini-Hochberg FDR correction."""
+    n = len(p_values)
+    if n == 0:
+        return []
+
+    # Sort by p-value, preserving original indices
+    indexed = sorted(enumerate(p_values), key=lambda x: x[1])
+    corrected = [0.0] * n
+
+    # Step 1+2: assign corrected p-value by rank
+    for rank, (orig_idx, p) in enumerate(indexed, 1):
+        corrected[orig_idx] = min(p * n / rank, 1.0)
+
+    # Step 3: enforce monotonicity (step-up from right)
+    sorted_indices = [idx for idx, _ in indexed]
+    for i in range(n - 2, -1, -1):
+        corrected[sorted_indices[i]] = min(
+            corrected[sorted_indices[i]],
+            corrected[sorted_indices[i + 1]] if i + 1 < n else 1.0,
+        )
+
+    return corrected
+```
+
+The function returns a list of corrected p-values in the same order as the input. After the call, two fields are appended to every result record:
+
+```python
+for i, r in enumerate(all_results):
+    r["p_value_corrected"]    = corrected_p[i]
+    r["significant_corrected"] = corrected_p[i] < 0.05
+```
+
+## Worked example
+
+Suppose five specifications produce the following raw p-values:
+
+| Spec | Raw p | Rank (ascending) | Corrected (p × 5 / rank) | After step-up |
+|------|-------|-----------------|--------------------------|---------------|
+| A | 0.001 | 1 | 0.005 | 0.005 |
+| B | 0.008 | 2 | 0.020 | 0.020 |
+| C | 0.039 | 3 | 0.065 | 0.065 |
+| D | 0.041 | 4 | 0.051 | 0.051 |
+| E | 0.210 | 5 | 0.210 | 0.210 |
+
+After BH correction, specs A and B are significant at α = 0.05; C and D are not — even though their raw p-values were below 0.05.
+
+<Info>
+The step-up pass in this example has no effect because the corrected values are already monotone. In larger, real datasets the step-up pass frequently reduces corrected p-values at intermediate ranks where the raw values are clustered close together.
+</Info>
+
+## Effect on robustness %
+
+The `significant_corrected` field drives both the robustness percentage and the green/grey coloring on the specification curve:
+
+```python
+sig_count       = sum(1 for r in all_results if r["significant_corrected"])
+robustness_pct  = round(sig_count / len(all_results) * 100, 1)
+```
+
+### Interpretation thresholds
+
+| Robustness % | Interpretation |
+|-------------|----------------|
+| ≥ 80% | **Strong** — effect is consistent across nearly all modeling choices |
+| 60–80% | **Moderate** — effect likely real but sensitive to some specifications |
+| < 50% | **Weak** — result may be an artifact of specific modeling choices; treat with caution |
+
+<Warning>
+The 80% / 60% / 50% thresholds are interpretive guides, not formal statistical criteria. A result at 79% is not categorically different from one at 81%. Use them to anchor discussion rather than as bright-line decision rules.
+</Warning>
+
+## BH vs. Bonferroni
+
+BH is deliberately less conservative than the Bonferroni correction. Bonferroni controls the family-wise error rate (FWER) — the probability of even one false positive — which becomes extremely stringent with hundreds of tests. BH controls the false discovery rate — the expected *proportion* of false positives among all significant results — which is the appropriate criterion when the goal is to characterize a distribution of effect estimates rather than to make a single binary claim.
+
+| Property | Bonferroni | Benjamini-Hochberg |
+|----------|-----------|-------------------|
+| Controls | FWER | FDR |
+| Threshold for 300 tests | p < 0.000167 | depends on rank |
+| Power | Very low | Higher |
+| Appropriate when | Single binary claim | Characterizing a distribution |

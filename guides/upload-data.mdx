@@ -1,0 +1,121 @@
+---
+title: 'Upload Your Data'
+description: 'Import a CSV dataset into Omniverse to begin your multiverse analysis. The platform automatically profiles every column and an AI assistant reviews your data for quality issues before you proceed.'
+---
+
+Omniverse accepts CSV files and profiles each column automatically on upload. An AI assistant then reviews the dataset for feasibility issues, flags problematic variables, and suggests preparation steps before you define your study intent.
+
+## Supported format
+
+The only supported input format is **CSV** (comma-separated values). Files must have a header row containing column names.
+
+<Note>
+  Omniverse reads the file entirely into memory. For the current single-process deployment, datasets up to several hundred thousand rows work well. Very large files (>1 million rows) may increase upload and analysis time significantly.
+</Note>
+
+## Upload process
+
+<Steps>
+  <Step title="Open the Import screen">
+    When you first open Omniverse, the Import screen is shown by default. You will see a dashed upload area with the label **Drop your CSV here or click to browse**.
+  </Step>
+
+  <Step title="Select or drop your file">
+    Either drag your `.csv` file onto the upload area, or click anywhere inside it to open a file picker. Only `.csv` files are accepted — the UI will display an error if you attempt to upload another format.
+  </Step>
+
+  <Step title="Wait for profiling">
+    After the file is selected, the UI shows **Analyzing [filename]…** while the backend reads the CSV and profiles every column. This typically completes in under two seconds for datasets with fewer than 100,000 rows.
+  </Step>
+
+  <Step title="Review the AI assessment">
+    Once profiling is complete, you are taken to the **Data Ingestion** screen. The AI assistant's initial review appears in the chat panel on the left. The variable panel on the right shows the full column-by-column profile.
+  </Step>
+</Steps>
+
+## What Omniverse profiles per column
+
+For every column in your CSV, the backend computes:
+
+<AccordionGroup>
+  <Accordion title="Universal fields (all column types)">
+    | Field | Description |
+    |---|---|
+    | `dtype` | Pandas dtype detected from the raw data (e.g. `int64`, `float64`, `object`) |
+    | `unique` | Count of distinct non-null values |
+    | `missing` | Count of null / NaN values |
+    | `missing_pct` | Missing values as a percentage of total rows |
+    | `histogram` | Bin counts for the distribution miniature shown in the variable panel |
+    | `distribution` | Inferred type: `binary`, `count/ordinal`, `continuous`, or `categorical` |
+  </Accordion>
+
+  <Accordion title="Numeric columns (continuous, binary, count/ordinal)">
+    | Field | Description |
+    |---|---|
+    | `mean` | Arithmetic mean of non-null values |
+    | `std` | Standard deviation |
+    | `min` / `max` | Observed range |
+    | `skewness` | Fisher-Pearson coefficient of skewness |
+    | `is_skewed` | `true` when `|skewness| > 1.0` — triggers a warning icon in the panel |
+  </Accordion>
+
+  <Accordion title="Distribution type inference rules">
+    The backend infers distribution type automatically:
+    - **binary** — exactly 2 unique values
+    - **count/ordinal** — fewer than 10 unique values and integer dtype (`int64` or `int32`)
+    - **continuous** — all other numeric columns
+    - **categorical** — non-numeric (`object`) columns
+
+    You can override the inferred type in the variable definition stage.
+  </Accordion>
+</AccordionGroup>
+
+## The AI review
+
+After upload, the AI assistant produces a structured review split into three sections:
+
+<CardGroup cols={3}>
+  <Card title="Feasibility" icon="chart-bar">
+    One to two sentences on whether the dataset is suitable for analysis. Covers sample size adequacy, overall data completeness, and immediate red flags.
+  </Card>
+  <Card title="Variables" icon="table">
+    A bullet per column — inferred type, and any concern such as suspicious values, potential miscategorisation, skewness, or high missingness.
+  </Card>
+  <Card title="Suggestions" icon="wrench">
+    Concrete preparation actions referencing specific variable names: imputing missing rows, log-transforming skewed distributions, removing outliers, standardising continuous variables, and more.
+  </Card>
+</CardGroup>
+
+## Data requirements
+
+<AccordionGroup>
+  <Accordion title="Minimum rows">
+    There is no hard minimum enforced by the upload endpoint. However, multiverse analysis generates hundreds of specifications, and very small datasets (fewer than ~30 rows) will produce unreliable coefficient estimates and assumption-check results. The AI will flag this in the Feasibility section.
+  </Accordion>
+
+  <Accordion title="Column types supported">
+    Omniverse handles numeric columns (`int`, `float`) and string/object columns. Date columns are not natively supported — convert them to numeric (e.g. days since baseline) before upload.
+  </Accordion>
+
+  <Accordion title="Missing values">
+    CSV cells with empty values, `NA`, `NaN`, or `NULL` strings are read as missing. The profile reports missing percentage per column and overall. High missingness (>5% per column) is flagged explicitly in the data context injected into the AI review.
+  </Accordion>
+</AccordionGroup>
+
+## Common data quality issues flagged
+
+<Warning>
+  Skewed distributions (|skewness| > 1.0) can inflate standard errors in OLS regression. The AI will suggest log-transformation or standardisation for these columns. You can apply these transforms interactively in the Variable Definition stage.
+</Warning>
+
+| Issue | How it is detected | Recommendation |
+|---|---|---|
+| High skewness | `|skewness| > 1.0` | Log-transform or standardise before analysis |
+| Missing data | `missing_pct > 5%` per column | Impute (median/mean) or remove rows in the variable chat |
+| Miscoded binary variable | Numeric column with only 2 unique values | Confirm the `binary` distribution type is correct; consider label clarity |
+| Sparse categories | Categorical column with >12 categories | Top 12 categories shown in histogram; collapse rare categories before analysis |
+| Multicollinearity | VIF >5 (checked during analysis, not upload) | Review during the variable definition stage |
+
+## Next step
+
+After reviewing the AI assessment, proceed to [Variable Definition](/guides/variable-definition) to clean and confirm your variables before defining your study intent.

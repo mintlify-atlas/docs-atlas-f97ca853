@@ -1,0 +1,180 @@
+---
+title: 'Interpreting Results'
+description: 'Read the robustness percentage, specification curve, per-specification cards, classifier results, and distribution plots. Use the AI chat to ask plain-English questions about your findings.'
+---
+
+The Results screen presents every specification Omniverse ran — hundreds of regression models and dozens of classifiers — in a set of filterable views. The goal is not to find a single significant model, but to understand whether your finding holds up across the entire space of defensible analytical choices.
+
+## The four tabs
+
+<Tabs>
+  <Tab title="Regressions">
+    The primary view. Shows every regression specification run for every predictor. The default grid view displays a forest plot card per specification; switch to list view for a sortable table.
+
+    **Key summary metrics at the top:**
+    - **Total specifications** — how many regression models were fit
+    - **Significant after FDR** — how many remain significant after Benjamini-Hochberg correction
+    - **Robustness %** — the share of specifications where the predictor's effect is statistically significant after FDR correction
+
+    Filter by predictor name, model family, or significance status. Sort by coefficient, p-value, or effect size.
+  </Tab>
+  <Tab title="Classifiers">
+    Shows every classifier specification (Random Forest, Gradient Boosting, XGBoost, SVM, Logistic Regression) across feature subsets.
+
+    Each card shows accuracy, AUC, observation count, and feature count. Click a card to open the detail modal with precision, recall, feature importance rankings, and the per-specification DAG.
+  </Tab>
+  <Tab title="Distributions">
+    Per-variable histogram plots for all analysis variables, coloured by role:
+    - **Purple** — outcome variable
+    - **Green** — predictor variables
+    - **Grey** — covariates
+
+    Click a card to open a detail modal with full descriptive statistics: count, missing, unique values, mean, standard deviation, median, range, and skewness.
+  </Tab>
+  <Tab title="AI Chat">
+    A conversational interface powered by the same Claude model used throughout the platform. Ask plain-English questions about your results after analysis completes.
+
+    Example questions:
+    - *"Which predictor is most robust across specifications?"*
+    - *"Do OLS and logistic regression agree on the direction of the effect?"*
+    - *"What does an 85% robustness percentage mean for my paper?"*
+    - *"Are the assumption violations concentrated in any particular model family?"*
+
+    The AI has access to the full results context — per-predictor breakdowns, model-family breakdowns, assumption violation counts, and effect sizes — and will answer honestly, including when results are weak or inconsistent.
+  </Tab>
+</Tabs>
+
+## Robustness percentage
+
+The robustness percentage is the single most important number Omniverse reports. It is the share of all specifications where a given predictor's effect is statistically significant after FDR correction.
+
+<CardGroup cols={3}>
+  <Card title="Strong finding" icon="circle-check">
+    **80% or above**
+
+    The effect is consistent across the vast majority of model specifications. Suitable for publication with the spec curve as evidence of robustness.
+  </Card>
+  <Card title="Moderate / mixed" icon="circle-dot">
+    **50–79%**
+
+    The effect is real in many specifications but sensitive to analytical choices. Report the full spec curve and discuss sources of heterogeneity.
+  </Card>
+  <Card title="Weak or fragile" icon="circle-x">
+    **Below 50%**
+
+    Treat with caution. The effect may be an artifact of specific modelling choices rather than a true signal in the data.
+  </Card>
+</CardGroup>
+
+<Warning>
+  A robustness percentage below 50% does not mean the analysis failed — it means the finding is fragile and those specific specifications driving significance deserve scrutiny. Do not cherry-pick the significant subset and report only those. The spec curve is the finding.
+</Warning>
+
+## Specification curve
+
+The specification curve plots every model specification sorted by effect size. Each dot represents one model:
+
+- **Green dot** — effect is statistically significant after FDR correction
+- **Grey dot** — effect is not significant after correction
+
+**How to read it:**
+
+- A tight band of consistent effects across the x-axis means the finding is robust and largely independent of modelling choices
+- A scattered curve where green and grey dots interleave means significance depends heavily on which covariates or model family you pick
+- A curve that is entirely green or entirely grey is the clearest possible result
+
+The specification curve is generated server-side as a PNG and is available for download from the regression modal.
+
+## Per-specification cards (regression)
+
+Click any card in the grid — or any row in the list — to open the regression detail modal. It contains:
+
+<AccordionGroup>
+  <Accordion title="Coefficient and 95% confidence interval">
+    A publication-quality forest plot showing the point estimate and confidence interval. Download as a 200 DPI PNG or copy to clipboard directly from the modal.
+  </Accordion>
+
+  <Accordion title="Statistics table">
+    | Field | Description |
+    |---|---|
+    | Coefficient | The point estimate for the predictor in this specification |
+    | 95% CI | Lower and upper bounds |
+    | p-value (raw) | Uncorrected p-value from the model |
+    | p-value (FDR corrected) | Benjamini-Hochberg corrected p-value across all specifications |
+    | Effect size | Standardised effect size |
+    | N observations | Sample size used in this specification |
+    | R² | For OLS models only |
+    | AIC | Akaike Information Criterion |
+    | Model family | e.g. OLS, Lasso, Logistic, Quantile |
+    | Assumptions met | Whether all assumption checks passed |
+  </Accordion>
+
+  <Accordion title="Assumption checks">
+    A table of per-specification assumption check results. For continuous outcomes: Shapiro-Wilk normality, Breusch-Pagan homoscedasticity, and VIF multicollinearity. For binary outcomes: events-per-variable ratio and minority class size.
+
+    When assumptions are violated, Omniverse automatically falls back to a robust alternative model family (log OLS, Box-Cox OLS, or quantile regression). The model family field in the statistics table reflects which model was actually fit.
+  </Accordion>
+
+  <Accordion title="Covariate classification table">
+    Each covariate included in this specification is shown with:
+    - Its **role**: confounder, mediator, precision variable, or neutral
+    - The **coefficient change percentage** — how much the predictor coefficient shifts when this covariate is added
+
+    Classification uses the change-in-estimate method. A covariate that shifts the primary coefficient by ≥10% is classified as a confounder or mediator based on its correlation pattern with the outcome.
+  </Accordion>
+
+  <Accordion title="Directed Acyclic Graph (DAG)">
+    A per-specification DAG coloured by covariate role. Download as PNG or copy to clipboard. The DAG makes the causal structure of each specification explicit — useful for identifying which specifications include known confounders and which do not.
+  </Accordion>
+
+  <Accordion title="Publication note">
+    A reminder about how to export the figure. Use **Download plot** for a 200 DPI publication-ready PNG. Use **Copy image** to copy the figure to the clipboard for pasting into documents or slide decks.
+  </Accordion>
+</AccordionGroup>
+
+## Classifier results
+
+<Note>
+  Classifiers run across feature subsets using 3-fold stratified cross-validation. They are complementary to the regression results — they answer "how well can we predict the outcome?" rather than "what is the effect size of each predictor?".
+</Note>
+
+Each classifier card and its detail modal report:
+
+| Metric | Description |
+|---|---|
+| Accuracy ± std | Mean cross-validated accuracy with standard deviation across folds |
+| AUC ± std | Area under the ROC curve |
+| Precision | Positive predictive value |
+| Recall | Sensitivity / true positive rate |
+| N observations | Sample size |
+| N features | Number of features in this specification |
+| Feature importance | Ranked table with bar chart — higher is more predictive |
+| DAG | Per-specification causal graph with role colouring |
+
+## Distribution tab
+
+The Distributions tab shows histogram plots for every variable included in your analysis. Filter by role (outcome, predictor, covariate) or switch between grid and list view.
+
+The list view shows mean, standard deviation, missing percentage, and skewness at a glance. Click any variable to open the full detail modal with the complete descriptive statistics panel and a downloadable histogram.
+
+## Exporting figures
+
+All plots can be exported directly from their detail modals:
+
+- **Download plot** — saves a 200 DPI PNG to your downloads folder. File name includes the predictor and model family.
+- **Copy image** — copies the PNG to the clipboard using the Clipboard API. Falls back to copying the URL if `ClipboardItem` is not available in the browser.
+- **Download DAG** — saves the per-specification DAG as a PNG.
+- **Copy DAG** — copies the DAG to the clipboard.
+
+These exports are available for regression forest plots, classifier feature importance charts, and distribution histograms.
+
+## AI chat in results
+
+The AI Chat tab gives you a conversational interface to interrogate your findings after analysis completes. The assistant has access to:
+
+- Per-predictor breakdown: total specifications, significant specifications, mean coefficient, mean effect size
+- Per-model-family breakdown: how many specifications per family were significant
+- Total specification count, overall robustness percentage, mean effect size
+- Assumption violation count
+
+The assistant will not spin weak results as strong, will not recommend cherry-picking significant specifications, and will not make causal claims from observational data without caveats. Ask it anything — it will give you a direct, honest answer under 250 words.

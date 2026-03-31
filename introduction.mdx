@@ -1,0 +1,84 @@
+---
+title: "Introduction"
+description: "Omniverse is a clinical research analysis platform that combats p-hacking by running every valid statistical model simultaneously and showing you how robust your findings actually are."
+---
+
+## The p-hacking problem
+
+Clinical research has a reproducibility crisis. A researcher can unconsciously pick the model specification that gives a significant p-value — choosing which covariates to include, which model family to use, or how to handle outliers in ways that inflate apparent significance without realising it. This is p-hacking, and it's endemic.
+
+The result: findings that look solid in one lab fail to replicate in the next. Journals reject papers for lack of robustness checks. FDA reviewers scrutinise trial analyses. Co-authors disagree about which covariates belong in the model.
+
+**Omniverse makes that impossible to hide.** Instead of fitting one regression and hoping it's the right choice, Omniverse fits every defensible specification simultaneously — different covariate subsets, model families, and automatic robust alternatives when statistical assumptions are violated. You see the full picture.
+
+## What Omniverse does
+
+Upload a CSV. Describe your hypothesis in plain English. Omniverse:
+
+1. Profiles every column, flags distribution issues, and uses AI to walk you through variable definitions
+2. Extracts your outcome, predictors, and confounders from the conversation — before you see any results
+3. Runs every valid model specification (typically 350–400 regression specs for a standard dataset)
+4. Applies Benjamini-Hochberg FDR correction across **all** specifications simultaneously
+5. Presents the robustness percentage, specification curve, covariate DAGs, and classifier benchmarks
+
+If your effect holds across 80%+ of specifications after FDR correction, it's a strong finding. Below 50%, treat it with caution.
+
+## The five-stage workflow
+
+<CardGroup cols={2}>
+  <Card title="1. Upload data" icon="upload" href="/guides/upload-data">
+    Upload a CSV and get an instant data profile. AI flags skewed distributions, encoding issues, and missing data patterns.
+  </Card>
+  <Card title="2. Define variables" icon="table-columns" href="/guides/variable-definition">
+    Chat with AI to rename columns, correct data types, and apply transformations before any analysis runs.
+  </Card>
+  <Card title="3. Set study intent" icon="bullseye" href="/guides/study-intent">
+    Describe your hypothesis in plain English. Omniverse extracts the outcome variable, predictors, and confounders in a structured format.
+  </Card>
+  <Card title="4. Run analysis" icon="play" href="/guides/running-analysis">
+    Launch the multiverse. Omniverse runs every valid model across all covariate subsets, model families, and transformations.
+  </Card>
+  <Card title="5. Interpret results" icon="chart-line" href="/guides/interpreting-results">
+    Review the robustness %, specification curve, and per-specification DAGs. Ask the AI plain-English questions about your findings.
+  </Card>
+</CardGroup>
+
+## Who it's for
+
+<AccordionGroup>
+  <Accordion title="Clinical researchers" icon="microscope">
+    You want findings that hold up. Omniverse lets you demonstrate robustness before submission — not just report the one specification that worked. Run the multiverse, attach the robustness % to your paper, and let reviewers see the full specification curve.
+  </Accordion>
+  <Accordion title="Biostatisticians" icon="chart-bar">
+    You already know about multiverse analysis but writing the loop yourself — handling assumption violations, applying FDR correction across all specs, generating interpretable visualisations — takes hours. Omniverse does it in under five minutes from a CSV and plain-English intent.
+  </Accordion>
+  <Accordion title="Journal reviewers and editors" icon="book-open">
+    You're seeing more papers claim robustness without showing it. Ask authors to run Omniverse and attach the specification curve. A tight band of consistent effects means the finding is real. A scattered mess means it depends on arbitrary modeling choices.
+  </Accordion>
+  <Accordion title="FDA and regulatory reviewers" icon="shield-halved">
+    Trial analysis plans are locked in advance, but post-hoc sensitivity analyses still require scrutiny. Omniverse's full specification table — every model, every covariate subset, every corrected p-value — gives you the complete audit trail.
+  </Accordion>
+</AccordionGroup>
+
+## How AI assists the workflow
+
+Claude (claude-sonnet-4-6 via Anthropic API) is active at three points in the workflow:
+
+- **Data profiling chat** — Claude reads your column profiles, flags skewed distributions and encoding issues, and suggests variable roles based on your data.
+- **Study intent chat** — You describe your hypothesis in plain English; Claude extracts the outcome variable, predictors, and confounders as a structured object that drives the analysis.
+- **Results chat** — After analysis completes, ask plain-English questions about your findings. Claude has access to the full specification table, robustness %, and summary statistics.
+
+<Note>
+  Omniverse is a proof-of-concept built at the YCombinator Bio x AI Hackathon. It is not production-ready: there is no authentication, no persistent storage, and no HIPAA-compliant deployment. All session data is held in memory and lost when the server restarts. See the [quickstart](/quickstart) for setup details.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up Omniverse locally and run your first multiverse analysis.
+  </Card>
+  <Card title="Core concepts" icon="lightbulb" href="/concepts">
+    Understand the statistics behind multiverse analysis, FDR correction, and the robustness %.
+  </Card>
+</CardGroup>

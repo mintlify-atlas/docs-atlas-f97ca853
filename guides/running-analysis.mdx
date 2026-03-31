@@ -1,0 +1,110 @@
+---
+title: 'Running the Analysis'
+description: 'Understand what happens when you click Run Analysis — from covariate subset generation and assumption checks through model fitting, FDR correction, and plot generation.'
+---
+
+When you commit your study intent and click **Run Analysis**, Omniverse runs a fully automated multiverse pipeline. You do not need to configure any models or set significance thresholds — the platform makes every defensible modelling decision and shows you all of them.
+
+<Note>
+  For a typical dataset with 3 predictors and 5 confounders (such as the Pima diabetes dataset), the pipeline generates approximately **350–400 regression specifications** and **25 classifier specifications**. All are visible and filterable in the results table.
+</Note>
+
+## What the pipeline does
+
+<Steps>
+  <Step title="Generate covariate subsets">
+    The platform takes the powerset of all confounders you specified (up to subsets of size 4) and pairs each subset with each predictor. This is the combinatorial expansion that produces hundreds of specifications from a handful of variables.
+  </Step>
+
+  <Step title="Run assumption checks per subset">
+    Before fitting each model, the platform runs:
+
+    - **Shapiro-Wilk** — normality of residuals (pass: p > 0.05; uses first 5000 residuals when n > 5000)
+    - **Breusch-Pagan** — homoscedasticity (pass: p > 0.05)
+    - **VIF** — multicollinearity (pass: max VIF < 10; only computed for multi-predictor specs)
+    - For binary outcomes: events-per-variable ≥ 10, and minority class > 5% of total
+
+    Assumption check results are stored per specification and shown in the detail modal.
+
+  </Step>
+
+  <Step title="Fit regression models">
+    Model selection depends on the outcome type declared in your study intent.
+
+    **Continuous outcomes:**
+    - OLS (baseline), Lasso, Ridge, and Elastic Net penalized variants
+    - If assumptions are violated: log-transform OLS, Box-Cox OLS, quantile regression (median)
+    - Applied across every valid covariate subset
+
+    **Binary outcomes:**
+    - Logistic regression (simple and multiple), penalized logistic (Lasso/Ridge)
+    - Effect measures: Odds Ratio, Risk Ratio, Risk Difference
+  </Step>
+
+  <Step title="Run classifiers (when enabled)">
+    If the `ANALYSIS_ENABLE_CLASSIFIERS` environment variable is set to `1` (the default), the platform also runs a suite of classifiers across feature subsets:
+
+    - Random Forest
+    - Gradient Boosting
+    - XGBoost
+    - SVM (RBF kernel)
+    - Logistic Regression
+
+    Each uses 3-fold stratified cross-validation and reports accuracy, AUC, precision, and recall. Classifiers run for all outcome types, not just binary.
+
+    <Note>
+      To disable classifiers (for faster iteration), set `ANALYSIS_ENABLE_CLASSIFIERS=0` in the backend environment before starting the server.
+    </Note>
+  </Step>
+
+  <Step title="Apply Benjamini-Hochberg FDR correction">
+    All p-values from all specifications — across every model family and every predictor — are collected into a single pool and corrected simultaneously using the Benjamini-Hochberg procedure.
+
+    This is critical: running 300 models without correction would produce ~15 spurious significant results at α=0.05 by chance alone. BH controls the expected proportion of false discoveries across the entire family, not per-model. The corrected p-values drive the robustness percentage and the green/grey colouring in the spec curve.
+  </Step>
+
+  <Step title="Classify covariate roles">
+    For each specification, every covariate is classified using the **change-in-estimate method**:
+
+    | Role | Definition |
+    |---|---|
+    | **Confounder** | Adding this covariate shifts the primary predictor coefficient by more than 10% |
+    | **Mediator** | On the causal pathway (detected via temporal and domain heuristics) |
+    | **Precision variable** | Reduces standard error without meaningfully changing the estimate |
+    | **Neutral** | No material effect on the estimate or its variance |
+
+    Each classification is shown on the per-specification DAG and in the covariate roles table in the detail modal.
+  </Step>
+
+  <Step title="Generate plots">
+    All plots are generated server-side using matplotlib (Agg backend, no display required):
+
+    - **Per-specification forest plots** — coefficient with 95% CI and regression scatter overlay
+    - **Directed Acyclic Graphs (DAGs)** — one per specification, nodes coloured by covariate role
+    - **Specification curve** — all specifications sorted by effect size, green = significant after FDR, grey = not
+    - **Feature importance bar charts** — one per classifier specification
+    - **Distribution histograms** — one per analysis variable, coloured by role (outcome / predictor / covariate)
+
+    Plots are saved as PNGs to `backend/plots/` and served via FastAPI at `/plots/`. The frontend fetches them with `<img src>` — no base64 blobs in the JSON response.
+  </Step>
+</Steps>
+
+## Typical runtimes
+
+| Dataset size | Approximate time |
+|---|---|
+| Small (500 rows, 3 predictors, 5 confounders) | 15–45 seconds |
+| Medium (2,000–10,000 rows) | 1–3 minutes |
+| Large (>50,000 rows) | 3–10 minutes |
+
+<Note>
+  Cold-start time depends on whether the Modal serverless backend is warm. With `USE_MODAL=1`, the first run may add ~3 seconds for container startup, but subsequent runs parallelise across specifications for a net speedup. Without Modal, everything runs in the single FastAPI process sequentially.
+</Note>
+
+## Scaling beyond a laptop
+
+Modal integration is built in. Set `USE_MODAL=1` in the backend environment to route `run_analysis`, `run_classifiers`, and all plot generation to Modal serverless containers with auto-scaling. The FastAPI backend acts as the orchestrator; Modal handles compute. Individual specifications can be parallelised across containers.
+
+## After analysis completes
+
+Results are stored in the session and you are automatically taken to the [Results](/guides/interpreting-results) screen. The session stores the full results object in memory — if the backend process restarts, results are lost and the analysis must be re-run.

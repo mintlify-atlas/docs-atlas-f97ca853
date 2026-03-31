@@ -1,0 +1,238 @@
+---
+title: 'Assumption checks'
+description: 'Automated statistical tests that run before each model specification, and how violated assumptions trigger robust alternatives.'
+keywords: ['assumption checks', 'Shapiro-Wilk', 'Breusch-Pagan', 'VIF', 'multicollinearity', 'homoscedasticity', 'normality']
+---
+
+Before committing to a model family for a given covariate set, Omniverse runs a battery of statistical assumption tests. The outcome determines whether the standard estimator is used or whether one of the robust alternatives is substituted.
+
+<Note>
+Assumption checks run once per covariate set, not once per model family. All four models in a covariate set (OLS, Lasso, Ridge, Elastic Net for continuous outcomes) share the same `assumptions_met` flag, but the robust alternatives are only added when that flag is `False`.
+</Note>
+
+## Continuous outcome checks
+
+`check_continuous_assumptions(y, X)` fits a preliminary OLS model on the full covariate set and inspects the residuals. It returns a dict with a per-test `passed` key and a top-level `all_met` flag.
+
+```python
+def check_continuous_assumptions(y: np.ndarray, X: np.ndarray) -> dict:
+    X_const = sm.add_constant(X)
+    model = sm.OLS(y, X_const).fit()
+    residuals = model.resid
+
+    # Three tests follow; all_met = all passed
+    results["all_met"] = all(
+        v.get("passed", False)
+        for v in results.values() if isinstance(v, dict)
+    )
+    return results
+```
+
+<AccordionGroup>
+  <Accordion title="Shapiro-Wilk normality test">
+    **What it tests:** Whether the OLS residuals are approximately normally distributed.
+
+    **Implementation:**
+    ```python
+    # Shapiro-Wilk has a hard limit; subsample if needed
+    sample = residuals[:5000] if len(residuals) > 5000 else residuals
+    shapiro_stat, shapiro_p = stats.shapiro(sample)
+
+    results["shapiro_wilk"] = {
+        "statistic": float(shapiro_stat),
+        "p_value":   float(shapiro_p),
+        "passed":    shapiro_p > 0.05,
+    }
+    ```
+
+    **Pass condition:** `p > 0.05` (fail to reject normality).
+
+    **Subsample:** When `n > 5000`, only the first 5000 residuals are passed to `scipy.stats.shapiro` because the Shapiro-Wilk algorithm has a computational limit of approximately 5000 observations.
+
+    <Note>
+    For large samples, Shapiro-Wilk becomes extremely sensitive and will reject normality even for trivially small departures. In practice, OLS is robust to mild non-normality when `n` is large — the assumption check is most informative for small-to-medium datasets.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Breusch-Pagan homoscedasticity test">
+    **What it tests:** Whether the variance of the residuals is constant across fitted values (homoscedasticity). A significant result indicates heteroscedasticity.
+
+    **Implementation:**
+    ```python
+    from statsmodels.stats.diagnostic import het_breuschpagan
+
+    bp_stat, bp_p, _, _ = het_breuschpagan(residuals, X_const)
+
+    results["breusch_pagan"] = {
+        "statistic": float(bp_stat),
+        "p_value":   float(bp_p),
+        "passed":    bp_p > 0.05,
+    }
+    ```
+
+    **Pass condition:** `p > 0.05` (fail to reject homoscedasticity).
+
+    When heteroscedasticity is detected, standard OLS standard errors are biased. The robust alternatives (quantile regression and Box-Cox / log transforms) are more appropriate in this setting.
+  </Accordion>
+
+  <Accordion title="VIF multicollinearity check">
+    **What it tests:** Whether predictors are collinear, which inflates standard errors and destabilizes coefficient estimates.
+
+    **Implementation:**
+    ```python
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+    # Only computed for multi-predictor specifications
+    if X.shape[1] > 1:
+        vif_values = [
+            variance_inflation_factor(X, i)
+            for i in range(X.shape[1])
+        ]
+        results["vif"] = {
+            "values":  vif_values,
+            "max_vif": max(vif_values),
+            "passed":  max(vif_values) < 10,
+        }
+    else:
+        results["vif"] = {"passed": True, "note": "Single predictor"}
+    ```
+
+    **Pass condition:** `max(VIF) < 10`.
+
+    **Single-predictor specs:** VIF is not computed — the check is automatically marked as passed because there is no collinearity possible with a single regressor.
+
+    <Warning>
+    VIF > 10 indicates severe multicollinearity. Penalized regression (Lasso or Ridge) is often more appropriate than OLS in this case because regularization explicitly handles correlated predictors.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+### The `all_met` flag
+
+`all_met` is `True` only when all three tests pass:
+
+```python
+results["all_met"] = all(
+    v.get("passed", False)
+    for v in results.values() if isinstance(v, dict)
+)
+```
+
+If any single test fails, `all_met` becomes `False` and the robust alternatives are triggered for that covariate set.
+
+---
+
+## Binary outcome checks
+
+`check_binary_assumptions(y, X)` does not inspect residuals — logistic regression residuals are structurally non-normal. Instead it verifies that the sample is sufficient for stable maximum likelihood estimation.
+
+```python
+def check_binary_assumptions(y: np.ndarray, X: np.ndarray) -> dict:
+    n           = len(y)
+    n_predictors = X.shape[1] if X.ndim > 1 else 1
+    events       = int(y.sum())
+    non_events   = n - events
+    min_class    = min(events, non_events)
+    ...
+```
+
+<AccordionGroup>
+  <Accordion title="Sample size (events per variable)">
+    **What it tests:** Whether there are enough outcome events relative to the number of predictors. Logistic regression becomes unreliable when the events-per-variable (EPV) ratio is too low.
+
+    **Implementation:**
+    ```python
+    results["sample_size"] = {
+        "n":                    n,
+        "events_per_variable":  min_class / max(n_predictors, 1),
+        "passed":               min_class / max(n_predictors, 1) >= 10,
+    }
+    ```
+
+    **Pass condition:** `min(events, non-events) / n_predictors ≥ 10`.
+
+    The rule of 10 EPV (sometimes cited as 5–20 in the literature) is a widely-used heuristic. It uses the minority class count in the numerator so that it applies symmetrically regardless of which class is coded as 1.
+  </Accordion>
+
+  <Accordion title="Class balance">
+    **What it tests:** Whether the minority class makes up at least 5% of the sample. Severe class imbalance causes predicted probabilities to collapse toward the majority class and inflates apparent accuracy.
+
+    **Implementation:**
+    ```python
+    results["class_balance"] = {
+        "events":       events,
+        "non_events":   non_events,
+        "minority_pct": round(min_class / n * 100, 1),
+        "passed":       min_class / n > 0.05,
+    }
+    ```
+
+    **Pass condition:** `minority class > 5%` of total observations.
+  </Accordion>
+</AccordionGroup>
+
+<Info>
+Binary assumption checks do not currently trigger automatic model switching — there is no penalized-logistic-only mode for extreme imbalance. The `assumptions_met` flag is propagated into the result record and surfaced in the UI so researchers can apply their own judgment.
+</Info>
+
+---
+
+## Assumption details in the results UI
+
+The `assumption_details` field is stored on every result record and drives the assumption panel in the regression modal. For standard models it contains the full per-test dict from the checks above. For robust alternatives it carries a simpler transform marker:
+
+| Model family | `assumption_details` content |
+|-------------|------------------------------|
+| OLS, Lasso, Ridge, Elastic Net | Full `check_continuous_assumptions` output |
+| OLS (Log Y) | `{"transform": "log"}` |
+| OLS (Box-Cox λ=…) | `{"transform": "box-cox", "lambda": <float>}` |
+| Quantile (median) | `{"transform": "quantile"}` |
+| Effect Measures | 2×2 table counts and divergence flag |
+
+---
+
+## What happens when assumptions are violated
+
+When `all_met` is `False` for a continuous-outcome covariate set, three additional specifications are appended:
+
+<AccordionGroup>
+  <Accordion title="Log-transform OLS">
+    Applied when `np.all(y > 0)`.
+
+    ```python
+    y_log = np.log(y)
+    log_result = run_ols(y_log, X, pred_idx)
+    # model_family stored as "OLS (Log Y)"
+    ```
+
+    The natural log stabilizes right-skewed outcomes and variance that grows with the mean (log-normal distributions). Coefficients are interpreted as the effect on `log(y)` — approximately a proportional change in `y` for small effects.
+  </Accordion>
+
+  <Accordion title="Box-Cox OLS">
+    Applied when `np.all(y > 0)`. Lambda is estimated from the data via maximum likelihood.
+
+    ```python
+    y_bc, lmbda = stats.boxcox(y)
+    bc_result = run_ols(y_bc, X, pred_idx)
+    # model_family stored as f"OLS (Box-Cox λ={lmbda:.2f})"
+    ```
+
+    Box-Cox generalizes the log transform: when λ = 0 it reduces to `log(y)`; other values stretch or compress the distribution differently. The data-driven λ selection makes this more flexible than a fixed log transform, at the cost of harder coefficient interpretation.
+  </Accordion>
+
+  <Accordion title="Quantile regression (median)">
+    Applied for any assumption violation; does not require `y > 0`.
+
+    ```python
+    X_const  = sm.add_constant(X)
+    qr_model = sm.QuantReg(y, X_const).fit(q=0.5, max_iter=1000)
+    # model_family stored as "Quantile (median)"
+    ```
+
+    Quantile regression at `q=0.5` estimates the conditional median rather than the conditional mean. It is robust to outliers and does not assume any particular distribution of residuals. The coefficient represents the effect of the predictor on the median of `y`.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+All three robust alternatives set `assumptions_met: True` in their result records — they are appropriate *because* the standard assumptions do not hold. When comparing specifications in the UI, filter on `assumptions_met = True` to see only the specifications that are methodologically valid for the data at hand.
+</Tip>

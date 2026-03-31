@@ -1,0 +1,284 @@
+---
+title: "Data Chat"
+description: "Conversational AI endpoints for cleaning, renaming, retyping, and transforming dataset variables."
+---
+
+The data chat endpoints let you interact with your dataset in natural language. The AI can rename columns, change their inferred distribution type, apply pandas transformations (e.g. log-transforms, filtering, imputation), and explain its reasoning.
+
+<Note>
+  All chat endpoints require a `session_id` obtained from [POST /upload](/api/upload).
+</Note>
+
+## POST /chat
+
+Non-streaming data chat. Sends a message, waits for the full AI response, and returns it along with any resulting profile changes.
+
+### Request
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The user message to send to the AI. Can be a question, instruction, or data transformation request.
+</ParamField>
+
+### Response
+
+<ResponseField name="response" type="string" required>
+  The AI-generated reply with markdown formatting.
+</ResponseField>
+
+<ResponseField name="profile_updated" type="boolean">
+  Present and `true` when the AI modified the dataset profile (renamed column, changed distribution type, or applied a data transform).
+</ResponseField>
+
+<ResponseField name="profile" type="object">
+  Updated dataset profile. Only present when `profile_updated` is `true`. Same structure as the profile returned by [POST /upload](/api/upload).
+</ResponseField>
+
+<ResponseField name="modifications" type="array">
+  List of data modifications applied during this turn. Only present when at least one modification occurred.
+
+  <Expandable title="modification object properties">
+    <ResponseField name="type" type="string">
+      Kind of modification: `"rename"`, `"retype"`, or `"transform"`.
+    </ResponseField>
+    <ResponseField name="variable" type="string">
+      Column name affected (new name for renames, column name for retype, empty string for dataset-level transforms).
+    </ResponseField>
+    <ResponseField name="from" type="string">
+      Previous value (old column name, old distribution type, or transform description for `"transform"` type).
+    </ResponseField>
+    <ResponseField name="to" type="string">
+      New value (new column name, new distribution type, or row count string for `"transform"` type).
+    </ResponseField>
+    <ResponseField name="source" type="string">
+      Who initiated the modification: `"ai"` or `"user"`.
+    </ResponseField>
+    <ResponseField name="timestamp" type="float">
+      Unix timestamp (seconds since epoch) when the modification was applied. Used as the key for [POST /revert-modification](#post-revert-modification).
+    </ResponseField>
+    <ResponseField name="code" type="string">
+      Python/pandas code that was executed. Present only for `"transform"` type modifications.
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Human-readable description of the transform. Present only for `"transform"` type modifications.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "message": "Log-transform the Insulin column to reduce skewness"
+  }'
+```
+
+```json
+{
+  "response": "I've applied a log1p transform to the Insulin column to reduce its skewness.",
+  "profile_updated": true,
+  "profile": { "rows": 768, "columns": 9, "..." : "..." },
+  "modifications": [
+    {
+      "type": "transform",
+      "variable": "",
+      "from": "Log1p transform applied to Insulin",
+      "to": "768 rows",
+      "source": "ai",
+      "timestamp": 1710000000.123,
+      "code": "df['Insulin'] = np.log1p(df['Insulin'])",
+      "description": "Log1p transform applied to Insulin"
+    }
+  ]
+}
+```
+
+---
+
+## POST /chat-stream
+
+Streaming version of data chat. Emits tokens progressively as NDJSON, then sends a single `final` event with the complete response and any profile changes.
+
+**Content-Type of response:** `application/x-ndjson`
+
+### Request
+
+Same fields as [POST /chat](#post-chat).
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The user message to send to the AI.
+</ParamField>
+
+### Streamed events
+
+**Chunk events** — emitted for each token:
+
+<ResponseField name="type" type="string">
+  Always `"chunk"`.
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  The incremental token text to append to the display buffer.
+</ResponseField>
+
+**Final event** — emitted once after all tokens:
+
+<ResponseField name="type" type="string">
+  Always `"final"`.
+</ResponseField>
+
+<ResponseField name="response" type="string">
+  The complete AI response (clean of any internal structured blocks).
+</ResponseField>
+
+<ResponseField name="profile_updated" type="boolean">
+  Present and `true` when profile was modified.
+</ResponseField>
+
+<ResponseField name="profile" type="object">
+  Updated profile object. Same structure as [POST /upload](/api/upload) profile. Only present when `profile_updated` is `true`.
+</ResponseField>
+
+<ResponseField name="modifications" type="array">
+  Applied modifications. Same structure as [POST /chat](#post-chat) modifications. Only present when modifications occurred.
+</ResponseField>
+
+**Error event** — emitted on failure:
+
+<ResponseField name="type" type="string">
+  Always `"error"`.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message string.
+</ResponseField>
+
+### Example stream output
+
+```json
+{"type": "chunk", "content": "I've applied"}
+{"type": "chunk", "content": " a log1p transform"}
+{"type": "chunk", "content": " to the Insulin column."}
+{"type": "final", "response": "I've applied a log1p transform to the Insulin column.", "profile_updated": true, "profile": {"rows": 768, "columns": 9}, "modifications": [{"type": "transform", "variable": "", "from": "Log1p transform applied to Insulin", "to": "768 rows", "source": "ai", "timestamp": 1710000000.123, "code": "df['Insulin'] = np.log1p(df['Insulin'])", "description": "Log1p transform applied to Insulin"}]}
+```
+
+---
+
+## POST /update-variable
+
+Directly update a variable's name or inferred distribution type without involving the AI.
+
+### Request
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session.
+</ParamField>
+
+<ParamField body="original_name" type="string" required>
+  The current name of the column to update.
+</ParamField>
+
+<ParamField body="updates" type="object" required>
+  Object containing one or both of the following fields.
+
+  <Expandable title="updates properties">
+    <ResponseField name="name" type="string">
+      New column name. Renames the column in both the profile and the underlying dataframe.
+    </ResponseField>
+    <ResponseField name="distribution" type="string">
+      New distribution type. One of `"binary"`, `"count/ordinal"`, `"continuous"`, or `"categorical"`.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Always `"updated"` on success.
+</ResponseField>
+
+<ResponseField name="profile" type="object">
+  Updated dataset profile reflecting the applied changes.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/update-variable \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "original_name": "Outcome",
+    "updates": { "distribution": "binary" }
+  }'
+```
+
+```json
+{
+  "status": "updated",
+  "profile": { "rows": 768, "columns": 9, "..." : "..." }
+}
+```
+
+---
+
+## POST /revert-modification
+
+Undo a specific modification by its `timestamp`. The server replays all remaining modifications in order on top of the original dataframe to reconstruct a consistent state.
+
+<Warning>
+  Reverting a transform modification may silently skip replaying it if the code raises an exception during replay.
+</Warning>
+
+### Request
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session.
+</ParamField>
+
+<ParamField body="timestamp" type="float" required>
+  Unix timestamp of the modification to revert. Obtained from the `timestamp` field in a modification object.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Always `"reverted"` on success.
+</ResponseField>
+
+<ResponseField name="profile" type="object">
+  Rebuilt dataset profile after removing the specified modification and replaying the rest.
+</ResponseField>
+
+<ResponseField name="modifications" type="array">
+  Remaining modifications after the revert (does not include the removed item).
+</ResponseField>
+
+---
+
+## What the AI can do
+
+The data chat AI supports the following operations through natural language:
+
+| Operation | Description |
+|-----------|-------------|
+| Rename | Rename one or more columns |
+| Retype | Change the inferred `distribution` of a column |
+| Filter | Remove rows matching a condition |
+| Transform | Apply arbitrary pandas operations (e.g. scaling, encoding) |
+| Log-transform | Apply `log1p` to a skewed numeric column |
+| Impute | Fill missing values with mean, median, mode, or a constant |
+
+<Tip>
+  Prefer `/chat-stream` in UI contexts for a more responsive experience. Use `/chat` when you need the full response before rendering.
+</Tip>

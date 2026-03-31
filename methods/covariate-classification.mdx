@@ -1,0 +1,206 @@
+---
+title: 'Covariate classification'
+description: 'How Omniverse automatically classifies each covariate as a confounder, mediator, precision variable, or neutral using the change-in-estimate method.'
+keywords: ['covariate roles', 'confounder', 'mediator', 'precision variable', 'change-in-estimate', 'DAG', 'causal inference']
+---
+
+Every regression specification in Omniverse includes a per-covariate role classification. Rather than treating all covariates as equivalent "controls", the change-in-estimate method asks what each covariate actually *does* to the predictor–outcome relationship.
+
+<Note>
+Covariate role classification is a statistical heuristic, not definitive causal proof. Domain knowledge is required to confirm any assigned role — particularly the mediator/confounder distinction. See the caveats under each role below.
+</Note>
+
+## The change-in-estimate method
+
+The method compares the predictor's estimated coefficient in two models:
+
+1. **Baseline model** — predictor alone (no covariates)
+2. **Adjusted model** — predictor plus one covariate
+
+The percentage change in the coefficient determines the role:
+
+```
+pct_change = (adj_coeff - base_coeff) / |base_coeff|
+```
+
+This is computed independently for each covariate in the specification. The threshold that separates "meaningful" from "trivial" change is **10%** (`CHANGE_THRESHOLD = 0.10` in `covariate_roles.py`).
+
+## The four roles
+
+<AccordionGroup>
+  <Accordion title="Confounder — blue badge">
+    **Definition:** Adding this covariate shifts the predictor's coefficient by ≥ 10%, and the covariate correlates more strongly with the **outcome** than with the predictor.
+
+    **Interpretation:** A confounder is a common cause of both the predictor and the outcome. Failing to control for it produces a biased estimate of the predictor's effect. Confounders should be included in any adjusted analysis.
+
+    **Detection logic:**
+    ```python
+    if abs(pct_change) >= CHANGE_THRESHOLD:
+        r_pred = abs(float(working[cov].corr(working[predictor])))
+        r_out  = abs(float(working[cov].corr(working[outcome])))
+        role   = "mediator" if r_pred > r_out else "confounder"
+    ```
+
+    The confounder/mediator split uses Pearson correlation as a heuristic proxy for causal direction: if the covariate tracks the outcome more closely than it tracks the predictor, it is more likely a backdoor path than an intermediate step.
+
+    <Warning>
+    The correlation heuristic can misclassify variables in datasets with strong non-linear relationships or when multiple causal pathways are present. Always cross-check with subject-matter knowledge and a formal DAG.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Mediator — yellow badge">
+    **Definition:** Adding this covariate shifts the predictor's coefficient by ≥ 10%, and the covariate correlates more strongly with the **predictor** than with the outcome.
+
+    **Interpretation:** A mediator sits on the causal pathway between the predictor and the outcome (predictor → mediator → outcome). Controlling for a mediator blocks part of the causal effect you are trying to estimate — this is over-adjustment. Whether to include a mediator depends on whether the research question targets the total effect or the direct effect.
+
+    **Detection logic:** Same as confounder (coefficient changes ≥ 10%), but `r_pred > r_out` flips the assignment to `"mediator"`.
+
+    **Practical implication:** If your research question is "what is the total effect of the predictor on the outcome?", exclude mediators from the adjustment set. If you want the direct effect (not mediated), include them — but report this distinction explicitly.
+
+    <Warning>
+    Omniverse's mediator detection is a simple statistical heuristic. It does not implement a formal mediation analysis (e.g., Baron-Kenny, counterfactual mediation). Do not interpret the mediator badge as a validated causal claim without additional analysis.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Precision variable — green badge">
+    **Definition:** Adding this covariate does **not** meaningfully shift the coefficient (change < 10%), but the standard error of the predictor's estimate shrinks by at least 5%.
+
+    **Detection logic:**
+    ```python
+    elif adj_se < base_se * 0.95:
+        role = "precision"
+    ```
+
+    **Interpretation:** A precision variable reduces noise in the outcome without confounding the predictor–outcome relationship. Including it increases statistical power (narrower confidence intervals, smaller p-values) without biasing the estimate. These are safe to include.
+
+    Typical examples: baseline measurements, stratification variables, technical covariates (batch, site, operator).
+  </Accordion>
+
+  <Accordion title="Neutral — grey badge">
+    **Definition:** Adding this covariate produces neither a meaningful shift in the coefficient (< 10%) nor a meaningful reduction in standard error (SE does not drop by ≥ 5%).
+
+    **Detection logic:**
+    ```python
+    else:
+        role = "neutral"
+    ```
+
+    **Interpretation:** The covariate has no material impact on the analysis either way. Including or excluding it makes little practical difference. In a parsimonious model you might omit it; in a pre-registered analysis you might keep it to follow the analysis plan regardless.
+  </Accordion>
+</AccordionGroup>
+
+## Full implementation
+
+```python
+CHANGE_THRESHOLD = 0.10  # 10% change-in-estimate threshold
+
+def classify_covariates(
+    df: pd.DataFrame,
+    outcome: str,
+    predictor: str,
+    covariates: list,
+) -> list:
+    all_vars = list(set([outcome, predictor] + covariates))
+    working  = df[all_vars].dropna()
+
+    # Need at least 20 complete observations
+    if len(working) < 20:
+        return [{"variable": c, "role": "neutral", "coeff_change_pct": 0.0}
+                for c in covariates]
+
+    y = working[outcome].values.astype(float)
+
+    # Baseline: predictor alone
+    X_base = working[[predictor]].values.astype(float)
+    base_coeff, base_se = _safe_ols_coeff(y, X_base, pred_idx=0)
+
+    results = []
+    for cov in covariates:
+        # Adjusted: predictor + this covariate
+        X_adj = working[[predictor, cov]].values.astype(float)
+        adj_coeff, adj_se = _safe_ols_coeff(y, X_adj, pred_idx=0)
+
+        pct_change = (adj_coeff - base_coeff) / abs(base_coeff)
+
+        if abs(pct_change) >= CHANGE_THRESHOLD:
+            r_pred = abs(float(working[cov].corr(working[predictor])))
+            r_out  = abs(float(working[cov].corr(working[outcome])))
+            role   = "mediator" if r_pred > r_out else "confounder"
+        elif adj_se < base_se * 0.95:
+            role   = "precision"
+        else:
+            role   = "neutral"
+
+        results.append({
+            "variable":        cov,
+            "role":            role,
+            "coeff_change_pct": round(pct_change * 100, 1),
+        })
+
+    return results
+```
+
+<Note>
+The baseline model always uses OLS regardless of the outcome type. This is a deliberate simplification — using a common estimator for the baseline ensures that the change-in-estimate is comparable across all covariate evaluations within a specification.
+</Note>
+
+## Where roles appear in the UI
+
+### Covariate roles table (regression modal)
+
+Each specification's detail panel shows a table with one row per covariate:
+
+| Column | Description |
+|--------|-------------|
+| **Variable** | Covariate name |
+| **Role** | Color-coded badge: confounder (blue), mediator (yellow), precision (green), neutral (grey) |
+| **Coefficient change %** | The signed `pct_change × 100` value; positive = coefficient increased when covariate added |
+
+### DAG visualization
+
+The directed acyclic graph rendered for each specification colors each covariate node by its role, giving a quick visual read of the causal structure implied by the data for that particular predictor–covariate combination.
+
+## Caching
+
+Because covariate role classification requires fitting one OLS model per covariate per specification, and the same predictor/covariate combination may appear in many specifications, results are cached by `(predictor, frozenset(covariates))`:
+
+```python
+covariate_role_cache: dict[tuple[str, tuple[str, ...]], list] = {}
+for r in all_results:
+    cache_key = (r["predictor"], tuple(sorted(r["covariates"])))
+    if cache_key not in covariate_role_cache:
+        covariate_role_cache[cache_key] = classify_covariates(
+            working_df,
+            outcome=outcome,
+            predictor=r["predictor"],
+            covariates=r["covariates"],
+        )
+    r["covariate_roles"] = covariate_role_cache[cache_key]
+```
+
+This means classification cost is proportional to the number of unique predictor/covariate-set combinations, not the total number of specifications. Across model families (OLS, Lasso, Ridge, …) that share the same covariate set, the roles are computed once and reused.
+
+## Practical guidance for researchers
+
+<AccordionGroup>
+  <Accordion title="Should I include confounders?">
+    Yes. A confounder biases the unadjusted estimate. All specifications in Omniverse that include a variable flagged as a confounder will produce a different (and generally more valid) estimate than the unadjusted version. The specification curve makes this shift visible — you can see exactly how much the effect estimate moves when confounders are added or removed.
+  </Accordion>
+
+  <Accordion title="Should I include mediators?">
+    It depends on your research question.
+
+    - **Total effect** (predictor → outcome, all pathways combined): exclude mediators from adjustment.
+    - **Direct effect** (predictor → outcome, excluding the mediated pathway): include mediators, but note the interpretation explicitly.
+
+    Omniverse runs both adjusted and unadjusted specifications, so the total and direct effects are both visible in the specification curve. The mediator badge flags which specifications are estimating one versus the other.
+  </Accordion>
+
+  <Accordion title="Should I include precision variables?">
+    Generally yes. Precision variables reduce standard errors without introducing bias, so including them increases the power to detect a real effect. The gain is typically modest but costs nothing in terms of validity.
+  </Accordion>
+
+  <Accordion title="Should I include neutral variables?">
+    Including them is harmless but adds degrees of freedom. In small samples, keeping unnecessary predictors can inflate standard errors. In large samples the impact is negligible. For a pre-registered analysis, include whatever your protocol specifies regardless of the badge.
+  </Accordion>
+</AccordionGroup>

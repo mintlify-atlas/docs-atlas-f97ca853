@@ -1,0 +1,103 @@
+---
+title: "API Overview"
+description: "Reference for the Omniverse clinical research analysis platform REST API."
+---
+
+The Omniverse API is a FastAPI application that accepts CSV datasets, manages analysis sessions, and orchestrates multiverse statistical analysis. All responses are JSON unless otherwise noted.
+
+<Note>
+  This is a proof-of-concept API. No authentication layer is present — all endpoints are publicly accessible to any caller.
+</Note>
+
+## Base URL
+
+```
+http://localhost:8000
+```
+
+## Session model
+
+Every operation is scoped to a **session**. Sessions are created by `POST /upload` and identified by a UUID `session_id`. All session state (dataframe, profile, intent, results) is held in memory and is **lost when the server restarts**.
+
+<Warning>
+  Sessions are not persisted to disk. Restarting the server invalidates all existing `session_id` values.
+</Warning>
+
+## Content types
+
+| Direction | Content-Type |
+|-----------|--------------|
+| Request body (most endpoints) | `application/json` |
+| Request body (`/upload`) | `multipart/form-data` |
+| Standard response | `application/json` |
+| Streaming response | `application/x-ndjson` |
+
+## Streaming format (NDJSON)
+
+Streaming endpoints (`/chat-stream`, `/intent-chat-stream`, `/results-chat-stream`) emit one JSON object per line using `application/x-ndjson`. Three event types are possible:
+
+| `type` | When emitted | Key fields |
+|--------|-------------|------------|
+| `chunk` | Each incremental token from the LLM | `content` (string) |
+| `final` | After the full response is assembled | `response`, plus optional metadata |
+| `error` | On any unhandled exception or missing session | `error` (string) |
+
+```json
+{"type": "chunk", "content": "The outcome"}
+{"type": "chunk", "content": " variable is..."}
+{"type": "final", "response": "The outcome variable is Outcome.", "intent_ready": true}
+```
+
+## CORS
+
+All origins, methods, and headers are allowed (`*`). No preflight configuration is required.
+
+## Static plot files
+
+Generated plot images (PNG) are served as static files:
+
+```
+GET /plots/{filename}
+```
+
+Plot filenames are returned in `plot_map`, `dag_map`, `classifier_plot_map`, `classifier_dag_map`, and `distribution_plot_map` fields of the `/analyze` response.
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /upload" icon="upload" href="/api/upload">
+    Upload a CSV file to create an analysis session and receive a data profile.
+  </Card>
+  <Card title="POST /chat" icon="message-circle" href="/api/chat">
+    Chat with the AI about your dataset to rename columns, change types, or apply transforms.
+  </Card>
+  <Card title="POST /intent-chat" icon="target" href="/api/intent">
+    Define the study intent (outcome, predictors, covariates) through a guided conversation.
+  </Card>
+  <Card title="POST /analyze" icon="chart-bar" href="/api/analyze">
+    Run the multiverse regression and classifier analysis after committing study intent.
+  </Card>
+  <Card title="GET /results/{session_id}" icon="database" href="/api/results">
+    Retrieve cached analysis results and chat with the AI about findings.
+  </Card>
+  <Card title="GET /plots/{filename}" icon="image" href="/api/results">
+    Serve generated plot PNG files as static assets.
+  </Card>
+</CardGroup>
+
+## All endpoints at a glance
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/upload` | Upload CSV, create session, get data profile |
+| `POST` | `/chat` | Non-streaming AI chat about the dataset |
+| `POST` | `/chat-stream` | Streaming AI chat about the dataset (NDJSON) |
+| `POST` | `/update-variable` | Rename or retype a column directly |
+| `POST` | `/revert-modification` | Undo a specific past modification by timestamp |
+| `POST` | `/intent-chat` | Non-streaming study intent conversation |
+| `POST` | `/intent-chat-stream` | Streaming study intent conversation (NDJSON) |
+| `POST` | `/analyze` | Run multiverse analysis (synchronous, may be slow) |
+| `GET` | `/results/{session_id}` | Fetch cached analysis results |
+| `GET` | `/sessions` | List all active sessions and their state |
+| `POST` | `/results-chat-stream` | Streaming AI chat about analysis results (NDJSON) |
+| `GET` | `/plots/{filename}` | Serve a generated plot PNG |

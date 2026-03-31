@@ -1,0 +1,102 @@
+---
+title: 'Define Study Intent'
+description: 'Pre-register your outcome variable, predictors, and covariates before the analysis runs. This step eliminates post-hoc specification bias and is the foundation of reproducible multiverse analysis.'
+---
+
+The Study Intent stage is where you define **what** to test before seeing any results. By committing your hypothesis in advance, you eliminate the possibility of unconsciously selecting model specifications after peeking at outcomes — the exact practice that multiverse analysis exists to expose.
+
+## Why pre-registration matters
+
+P-hacking is endemic in research. A researcher fitting a single model can (consciously or not) cycle through covariate sets, transformations, and model families until a significant p-value appears. Omniverse makes this impossible by running every defensible specification simultaneously. But that only works if the outcome variable, predictors, and covariates are locked in before the analysis starts.
+
+<Warning>
+  Do not describe a directional hypothesis — for example, "I expect higher BMI to increase glucose." The whole point of multiverse analysis is to remove researcher bias about direction and magnitude. Omniverse will test all directions across all specifications. Just tell it what to test, not what you expect to find.
+</Warning>
+
+## The three pieces needed
+
+<Steps>
+  <Step title="Outcome variable">
+    The column you are trying to explain or predict. The AI will ask you to confirm whether it is continuous, binary, or ordinal — this determines which model families are run.
+
+    **Example:** "I want to predict diabetes diagnosis" → the AI maps this to the `diabetes_diagnosis` column and confirms it is binary.
+  </Step>
+
+  <Step title="Predictors">
+    The variables whose effect on the outcome you want to test. These are your variables of interest — the analysis will report a robustness percentage and specification curve for each predictor separately.
+
+    **Example:** "I want to test BMI, plasma glucose, and age as predictors."
+  </Step>
+
+  <Step title="Covariates / confounders">
+    Variables to control for across all specifications. The multiverse analysis varies which subset of covariates is included — but every covariate you list here is eligible for inclusion.
+
+    **Example:** "Control for blood pressure, skin thickness, and insulin."
+
+    If you do not specify any covariates, Omniverse auto-assigns all remaining columns (those that are not the outcome or a predictor) as covariates. The Study Design panel will show `covariates_auto_assigned: true` in this case.
+  </Step>
+</Steps>
+
+## How to describe your hypothesis
+
+You describe your study in plain English through the chat interface. The AI reads your dataset's column names and maps what you say to exact column names. You do not need to type column names verbatim — the AI resolves natural language to the closest matching column.
+
+A minimal prompt might look like:
+
+```text
+I want to study whether BMI, plasma glucose, and age predict diabetes diagnosis.
+Control for blood pressure, skin thickness, and insulin.
+```
+
+The AI will confirm its interpretation and ask clarifying questions if anything is ambiguous. When all three pieces are identified, the Study Design panel on the right updates in real time.
+
+## The Study Design panel
+
+The right-hand panel has three tabs that update as the conversation progresses:
+
+<CardGroup cols={3}>
+  <Card title="Outcome" icon="target">
+    Shows the committed outcome variable as a chip. Click the × to clear and re-specify.
+  </Card>
+  <Card title="Predictors" icon="flask-conical">
+    Shows each predictor as a chip. You can add or remove predictors from the dropdown without re-typing in chat.
+  </Card>
+  <Card title="Covariates" icon="shield">
+    Shows each covariate as a chip. The full set of eligible columns is available in the Add dropdown.
+  </Card>
+</CardGroup>
+
+## The commit button
+
+The **Run Analysis** button appears in the header only when all three fields are populated:
+
+- An outcome variable that matches a column in your dataset
+- At least one predictor that matches a column in your dataset
+- At least one covariate (or an explicit statement that no covariates are needed)
+
+<Note>
+  If you say "no covariates" or "no confounders", Omniverse recognises the explicit declaration and enables the commit button without requiring a covariate list. Otherwise, if the outcome and predictors are defined but covariates are not, it auto-assigns all remaining columns.
+</Note>
+
+Clicking **Run Analysis** calls the `__commit__` endpoint, which:
+
+1. Extracts structured intent from the conversation using the AI
+2. Validates that all column names match the uploaded dataset
+3. Locks the intent into the session
+4. Advances to the Analysis stage
+
+Once committed, the intent cannot be changed without starting a new session.
+
+## What the AI extracts
+
+The AI produces a structured JSON object with exactly three fields:
+
+```json
+{
+  "outcome_variable": "diabetes_diagnosis",
+  "predictors": ["bmi", "plasma_glucose", "age"],
+  "confounders": ["blood_pressure", "skin_thickness", "insulin"]
+}
+```
+
+This object drives every aspect of the subsequent analysis: which model families are run, which covariate subsets are generated, and how the specification curve is labelled.

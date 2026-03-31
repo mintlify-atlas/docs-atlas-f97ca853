@@ -1,0 +1,94 @@
+{
+  "projectType": "saas",
+  "projectName": "Omniverse",
+  "projectDescription": "An AI-powered clinical research analysis platform that combats p-hacking and unconscious bias by running every valid statistical model specification simultaneously and quantifying how robust a finding truly is.",
+  "theme": "luma",
+  "primaryColor": "#6366f1",
+  "lightColor": "#a5b4fc",
+  "darkColor": "#4338ca",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "concepts"
+            ]
+          },
+          {
+            "group": "Using Omniverse",
+            "pages": [
+              "guides/upload-data",
+              "guides/variable-definition",
+              "guides/study-intent",
+              "guides/running-analysis",
+              "guides/interpreting-results"
+            ]
+          },
+          {
+            "group": "Statistical Methods",
+            "pages": [
+              "methods/multiverse-analysis",
+              "methods/assumption-checks",
+              "methods/fdr-correction",
+              "methods/covariate-classification"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/local-setup",
+              "deployment/modal-cloud"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/overview",
+              "api/upload",
+              "api/chat",
+              "api/intent",
+              "api/analyze",
+              "api/results"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Exhaustive multiverse analysis across all valid model specifications",
+    "Automated statistical assumption checking (Shapiro-Wilk, Breusch-Pagan, VIF)",
+    "Benjamini-Hochberg FDR correction across all specifications simultaneously",
+    "AI-powered variable profiling and study intent definition via Claude",
+    "Classifier multiverse with Random Forest, Gradient Boosting, XGBoost, and SVM",
+    "Automatic covariate role classification using change-in-estimate method",
+    "Per-specification DAG visualization and publication-ready plot export",
+    "Specification curve showing effect sizes ranked across all models",
+    "Modal serverless integration for cloud-scale compute",
+    "Streaming AI chat for interactive results interpretation"
+  ],
+  "publicApiSurface": [
+    "POST /upload — Upload a CSV and receive a session ID with data profile",
+    "POST /chat — Chat about data quality and variable definitions",
+    "POST /chat-stream — Streaming version of data chat",
+    "POST /update-variable — Rename or retype a variable in the session",
+    "POST /revert-modification — Undo a specific data modification",
+    "POST /intent-chat — Conversational study intent definition",
+    "POST /intent-chat-stream — Streaming version of intent chat",
+    "POST /analyze — Run the full multiverse analysis",
+    "POST /results-chat-stream — Streaming AI chat about analysis results",
+    "GET /results/{session_id} — Retrieve cached analysis results",
+    "GET /sessions — List active sessions",
+    "GET /plots/{filename} — Serve generated plot images"
+  ]
+}

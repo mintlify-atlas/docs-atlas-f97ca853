@@ -1,0 +1,272 @@
+---
+title: "Run Analysis"
+description: "Execute multiverse regression and classifier analysis for a committed study intent."
+---
+
+Runs the full multiverse analysis for a session. The server executes every combination of statistical model, predictor, and covariate set, collects results, generates plots and DAGs, runs classifiers, and returns everything in a single response.
+
+<Warning>
+  This endpoint is **synchronous**. Depending on dataset size and number of specifications, it can take from a few seconds to several minutes to complete. Do not send concurrent analyze requests for the same session.
+</Warning>
+
+## Prerequisites
+
+1. An active session with a `session_id` from [POST /upload](/api/upload).
+2. A committed study intent from [POST /intent-chat](/api/intent) (`__commit__`).
+
+## Request
+
+**Method:** `POST /analyze`  
+**Content-Type:** `application/json`
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session with a committed intent. Returns `{"error": "No study intent submitted"}` if intent has not been committed.
+</ParamField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}'
+```
+
+## Response
+
+<ResponseField name="outcome_variable" type="string">
+  The outcome column name used for the analysis, from the committed intent.
+</ResponseField>
+
+<ResponseField name="outcome_type" type="string">
+  Inferred type of the outcome variable. One of `"continuous"`, `"binary"`, or `"count"`.
+</ResponseField>
+
+<ResponseField name="total_specs" type="integer">
+  Total number of model specifications evaluated.
+</ResponseField>
+
+<ResponseField name="significant_specs" type="integer">
+  Number of specifications where the predictor effect was statistically significant after Benjamini-Hochberg FDR correction (`p_value_corrected < 0.05`).
+</ResponseField>
+
+<ResponseField name="robustness_pct" type="float">
+  Robustness percentage: `significant_specs / total_specs × 100`.
+</ResponseField>
+
+<ResponseField name="mean_effect_size" type="float">
+  Mean effect size (coefficient or standardized effect) across all specifications.
+</ResponseField>
+
+<ResponseField name="regressions" type="array">
+  One object per regression specification.
+
+  <Expandable title="regression spec properties">
+    <ResponseField name="spec_id" type="string">
+      Unique identifier for this specification.
+    </ResponseField>
+    <ResponseField name="model_family" type="string">
+      Statistical model used. One of: `"OLS"`, `"Lasso"`, `"Ridge"`, `"Elastic Net"`, `"OLS (Log Y)"`, `"OLS (Box-Cox λ=…)"`, `"Quantile (median)"`, `"Logistic"`, `"Logistic (Lasso)"`, `"Logistic (Ridge)"`, `"Effect Measures"`.
+    </ResponseField>
+    <ResponseField name="predictor" type="string">
+      Primary predictor variable for this specification.
+    </ResponseField>
+    <ResponseField name="outcome" type="string">
+      Outcome variable name.
+    </ResponseField>
+    <ResponseField name="covariates" type="string[]">
+      Covariate columns included in this specification.
+    </ResponseField>
+    <ResponseField name="coefficient" type="float">
+      Estimated effect of the predictor on the outcome.
+    </ResponseField>
+    <ResponseField name="p_value" type="float">
+      Raw p-value for the predictor coefficient.
+    </ResponseField>
+    <ResponseField name="p_value_corrected" type="float">
+      Multiple-testing corrected p-value.
+    </ResponseField>
+    <ResponseField name="ci_lower" type="float">
+      Lower bound of the 95% confidence interval.
+    </ResponseField>
+    <ResponseField name="ci_upper" type="float">
+      Upper bound of the 95% confidence interval.
+    </ResponseField>
+    <ResponseField name="r_squared" type="float">
+      R-squared (or pseudo R-squared) for the model.
+    </ResponseField>
+    <ResponseField name="aic" type="float">
+      Akaike Information Criterion for model comparison.
+    </ResponseField>
+    <ResponseField name="n_obs" type="integer">
+      Number of observations used (after dropping rows with missing values).
+    </ResponseField>
+    <ResponseField name="significant" type="boolean">
+      `true` when `p_value < 0.05`.
+    </ResponseField>
+    <ResponseField name="significant_corrected" type="boolean">
+      `true` when `p_value_corrected < 0.05`.
+    </ResponseField>
+    <ResponseField name="effect_size" type="float">
+      Standardized effect size.
+    </ResponseField>
+    <ResponseField name="assumptions_met" type="boolean">
+      `true` when key model assumptions passed diagnostic checks.
+    </ResponseField>
+    <ResponseField name="assumption_details" type="object">
+      Detailed results of individual assumption checks (keys vary by model family).
+    </ResponseField>
+    <ResponseField name="covariate_roles" type="array">
+      Per-covariate role classification. Each item contains `variable` (string), `role` (one of `"confounder"`, `"mediator"`, `"precision"`, `"neutral"`), and `coeff_change_pct` (float, signed percentage change in predictor coefficient when this covariate is added).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="classifier_results" type="array">
+  One object per classifier specification. Empty array when classifiers are disabled.
+
+  <Expandable title="classifier result properties">
+    <ResponseField name="spec_id" type="string">
+      Unique identifier for this classifier specification.
+    </ResponseField>
+    <ResponseField name="classifier" type="string">
+      Classifier name (e.g. `"RandomForest"`, `"LogisticRegression"`, `"GradientBoosting"`).
+    </ResponseField>
+    <ResponseField name="accuracy" type="float">
+      Mean cross-validated accuracy.
+    </ResponseField>
+    <ResponseField name="accuracy_std" type="float">
+      Standard deviation of cross-validated accuracy.
+    </ResponseField>
+    <ResponseField name="auc" type="float">
+      Mean cross-validated AUC-ROC score.
+    </ResponseField>
+    <ResponseField name="auc_std" type="float">
+      Standard deviation of cross-validated AUC-ROC.
+    </ResponseField>
+    <ResponseField name="precision" type="float">
+      Mean cross-validated precision.
+    </ResponseField>
+    <ResponseField name="recall" type="float">
+      Mean cross-validated recall.
+    </ResponseField>
+    <ResponseField name="n_obs" type="integer">
+      Number of observations used.
+    </ResponseField>
+    <ResponseField name="n_features" type="integer">
+      Number of features used.
+    </ResponseField>
+    <ResponseField name="features" type="string[]">
+      All feature column names passed to the classifier.
+    </ResponseField>
+    <ResponseField name="predictors_used" type="string[]">
+      Predictor columns included in this specification.
+    </ResponseField>
+    <ResponseField name="covariates_used" type="string[]">
+      Covariate columns included in this specification.
+    </ResponseField>
+    <ResponseField name="feature_importance" type="object">
+      Map of feature name to importance score.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="classifier_summary" type="object">
+  Aggregate classifier performance across all specs.
+
+  <Expandable title="classifier_summary properties">
+    <ResponseField name="total_specs" type="integer">
+      Total number of classifier specifications run.
+    </ResponseField>
+    <ResponseField name="best_classifier" type="string">
+      Name of the classifier with the highest mean accuracy.
+    </ResponseField>
+    <ResponseField name="best_accuracy" type="float">
+      Accuracy of the best classifier.
+    </ResponseField>
+    <ResponseField name="mean_accuracy" type="float">
+      Mean accuracy across all classifier specifications.
+    </ResponseField>
+    <ResponseField name="mean_auc" type="float">
+      Mean AUC-ROC across all classifier specifications.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="plot_map" type="object">
+  Map of `spec_id` → plot PNG filename for regression forest plots. Filenames are served at `/plots/{filename}`.
+</ResponseField>
+
+<ResponseField name="dag_map" type="object">
+  Map of `spec_id` → DAG PNG filename for regression specifications.
+</ResponseField>
+
+<ResponseField name="classifier_plot_map" type="object">
+  Map of `spec_id` → plot PNG filename for classifier result plots.
+</ResponseField>
+
+<ResponseField name="classifier_dag_map" type="object">
+  Map of `spec_id` → DAG PNG filename for classifier specifications.
+</ResponseField>
+
+<ResponseField name="distribution_plot_map" type="object">
+  Map of variable name → distribution plot PNG filename. Covers outcome, predictor, and covariate variables.
+</ResponseField>
+
+<ResponseField name="distribution_stats" type="array">
+  Descriptive statistics for each analysis variable.
+
+  <Expandable title="distribution stat properties">
+    <ResponseField name="variable" type="string">
+      Column name.
+    </ResponseField>
+    <ResponseField name="role" type="string">
+      Variable role: `"outcome"`, `"predictor"`, or `"covariate"`.
+    </ResponseField>
+    <ResponseField name="n" type="integer">
+      Non-missing observation count.
+    </ResponseField>
+    <ResponseField name="missing" type="integer">
+      Missing value count.
+    </ResponseField>
+    <ResponseField name="missing_pct" type="float">
+      Missing percentage, rounded to one decimal place.
+    </ResponseField>
+    <ResponseField name="unique" type="integer">
+      Unique value count.
+    </ResponseField>
+    <ResponseField name="mean" type="float">
+      Mean value. Present for numeric variables only.
+    </ResponseField>
+    <ResponseField name="std" type="float">
+      Standard deviation. Present for numeric variables only.
+    </ResponseField>
+    <ResponseField name="min" type="float">
+      Minimum value. Present for numeric variables only.
+    </ResponseField>
+    <ResponseField name="max" type="float">
+      Maximum value. Present for numeric variables only.
+    </ResponseField>
+    <ResponseField name="median" type="float">
+      Median value. Present for numeric variables only.
+    </ResponseField>
+    <ResponseField name="skewness" type="float">
+      Skewness coefficient. Present for numeric variables only.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="session_id" type="string">
+  The session UUID, echoed back for convenience.
+</ResponseField>
+
+## Error responses
+
+```json
+{"error": "Session not found"}
+{"error": "No study intent submitted"}
+{"error": "<exception message>"}
+```
+
+<Note>
+  Results are cached in the session after a successful analysis. They can be retrieved later without re-running via [GET /results/{session_id}](/api/results).
+</Note>

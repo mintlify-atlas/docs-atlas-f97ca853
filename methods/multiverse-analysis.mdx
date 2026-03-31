@@ -1,0 +1,216 @@
+---
+title: 'Multiverse analysis'
+description: 'How Omniverse exhaustively fits every defensible model specification and why that matters for reproducibility.'
+keywords: ['multiverse analysis', 'specification curve', 'covariate subsets', 'model specifications', 'robustness']
+---
+
+Multiverse analysis replaces the single model chosen by a researcher with every valid model that could reasonably be chosen. The term was coined by Steiger & McCulloch; it is increasingly required as a robustness check by top clinical journals. Rather than asking "is this result significant?", it asks "across what fraction of all defensible specifications is this result significant?"
+
+<Info>
+Omniverse uses the robustness % — the share of specifications where the corrected p-value is below 0.05 — as the headline summary statistic. A finding that survives 90% of specifications is qualitatively more credible than one that survives 20%.
+</Info>
+
+## The problem with a single specification
+
+A researcher who fits one regression has made dozens of implicit choices: which covariates to include, whether to penalize, whether to log-transform the outcome, whether to use a robust estimator. Each choice is defensible in isolation, but the combination that was actually run is one of potentially hundreds. P-hacking is often not intentional — it is the natural consequence of having a garden of forking paths and reporting only the path you walked down.
+
+Omniverse closes that garden by walking all the paths simultaneously and showing you the full distribution of results.
+
+## Covariate subset generation
+
+The first axis of the multiverse is which covariates appear in each specification. Given a list of `predictors` and `confounders`, `generate_covariate_subsets()` builds every meaningful combination:
+
+```python
+def generate_covariate_subsets(
+    predictors: list[str],
+    confounders: list[str],
+    max_subset_size: int = 4
+) -> list[list[str]]:
+    subsets = []
+
+    # Combinatorial subsets of predictors, up to max_subset_size
+    max_k = min(len(predictors), max_subset_size)
+    for k in range(1, max_k + 1):
+        for combo in itertools.combinations(predictors, k):
+            subsets.append(list(combo))               # without confounders
+            if confounders:
+                subsets.append(list(combo) + confounders)  # with all confounders
+
+    # Each predictor paired with all confounders
+    if confounders and len(predictors) > 0:
+        for pred in predictors:
+            subsets.append([pred] + confounders)
+
+    # Deduplicate on sorted tuple identity
+    seen = set()
+    unique_subsets = []
+    for s in subsets:
+        key = tuple(sorted(s))
+        if key not in seen:
+            seen.add(key)
+            unique_subsets.append(s)
+
+    return unique_subsets
+```
+
+The logic produces three families of subsets:
+
+| Family | Description |
+|--------|-------------|
+| **Predictor-only combos** | All combinations of 1 to `min(len(predictors), 4)` predictors, without any confounders |
+| **Predictor combos + confounders** | Each of the above, extended with the full confounder list |
+| **Single predictor + all confounders** | Each predictor individually paired with every confounder |
+
+All duplicates are removed by normalising each subset to a sorted tuple before inserting into a seen set.
+
+<Note>
+The `max_subset_size` cap (default 4) prevents combinatorial explosion when the predictor list is large. With 10 predictors the uncapped powerset would be 1023 subsets; the cap keeps it tractable. The `ANALYSIS_MAX_COVARIATE_SETS` environment variable can further limit the total count in constrained environments.
+</Note>
+
+## Spec count
+
+With `k` predictors and `n` confounders the number of covariate subsets grows as:
+
+```
+O(2ⁿ × k)
+```
+
+A typical Pima diabetes run (3 predictors, 5 confounders) produces roughly **350–400 regression specifications** and **~25 classifier specifications**. All are visible and filterable in the results table.
+
+## Model families
+
+<Tabs>
+  <Tab title="Continuous outcomes">
+    For each covariate subset, four regression families are always attempted:
+
+    | Model | Implementation | Key parameters |
+    |-------|---------------|----------------|
+    | **OLS** | `statsmodels.OLS` | Standard least squares with constant |
+    | **Lasso** | `sklearn.Lasso` | `alpha=0.1`, `max_iter=10000` |
+    | **Ridge** | `sklearn.Ridge` | `alpha=1.0` |
+    | **Elastic Net** | `sklearn.ElasticNet` | `alpha=0.1`, `l1_ratio=0.5`, `max_iter=10000` |
+
+    Penalized models are fit on `StandardScaler`-normalized features. Approximate p-values are derived from the residual MSE and a t-distribution with `n - p - 1` degrees of freedom.
+
+    When [assumption checks](/methods/assumption-checks) detect violations, three additional robust alternatives are appended for that covariate set:
+
+    | Model | Condition | Implementation |
+    |-------|-----------|----------------|
+    | **OLS (Log Y)** | All `y > 0` | `np.log(y)` then standard OLS |
+    | **OLS (Box-Cox λ)** | All `y > 0` | `scipy.stats.boxcox(y)`, λ estimated from data |
+    | **Quantile (median)** | Any violation | `statsmodels.QuantReg(y, X).fit(q=0.5)` |
+
+    ```python
+    # Robust alternative — Box-Cox example from analysis_engine.py
+    if np.all(y > 0):
+        y_bc, lmbda = stats.boxcox(y)
+        bc_result = run_ols(y_bc, X, pred_idx)
+        all_results.append({
+            "model_family": f"OLS (Box-Cox λ={lmbda:.2f})",
+            "assumption_details": {"transform": "box-cox", "lambda": lmbda},
+            ...
+        })
+    ```
+  </Tab>
+  <Tab title="Binary outcomes">
+    For each covariate subset, three logistic model families are always attempted:
+
+    | Model | Implementation | Key parameters |
+    |-------|---------------|----------------|
+    | **Logistic** | `statsmodels.Logit` | MLE, `maxiter=100` |
+    | **Logistic (Lasso)** | `sklearn.LogisticRegression` | `penalty="l1"`, `C=1.0`, `solver="saga"` |
+    | **Logistic (Ridge)** | `sklearn.LogisticRegression` | `penalty="l2"`, `C=1.0`, `solver="lbfgs"` |
+
+    For binary predictors, a fourth result type is added — **Effect Measures** — computed directly from the 2×2 table:
+
+    ```python
+    def compute_effect_measures(y: np.ndarray, x: np.ndarray) -> dict:
+        a = np.sum((x == 1) & (y == 1))  # exposed, outcome
+        b = np.sum((x == 1) & (y == 0))  # exposed, no outcome
+        c = np.sum((x == 0) & (y == 1))  # unexposed, outcome
+        d = np.sum((x == 0) & (y == 0))  # unexposed, no outcome
+
+        or_val  = (a * d) / (b * c)       # Odds Ratio
+        r1 = a / (a + b)
+        r0 = c / (c + d)
+        rr_val  = r1 / r0                  # Risk Ratio
+        rd_val  = r1 - r0                  # Risk Difference
+    ```
+
+    The `divergent` flag is set when the OR and RR differ by more than 20%, which signals that outcome prevalence is high enough to make the OR a misleading proxy for the RR.
+  </Tab>
+  <Tab title="Classifiers">
+    The classifier multiverse runs independently of the regression multiverse, using a simpler feature-subset scheme (each predictor with all confounders, all predictors together, and all features combined).
+
+    | Classifier | Key parameters |
+    |-----------|----------------|
+    | **Random Forest** | `n_estimators=100`, `max_depth=8`, `random_state=42` |
+    | **Gradient Boosting** | `n_estimators=100`, `max_depth=4`, `learning_rate=0.1` |
+    | **XGBoost** | `n_estimators=100`, `max_depth=4`, `learning_rate=0.1` (loaded if available) |
+    | **SVM (RBF)** | `kernel="rbf"`, `probability=True` |
+    | **Logistic Regression** | `max_iter=1000`, `solver="lbfgs"` |
+
+    All classifiers run with **3-fold stratified cross-validation** via a single `cross_validate` call that collects accuracy, ROC-AUC, weighted precision, and weighted recall simultaneously. Features are `StandardScaler`-normalized before each fold.
+
+    ```python
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+
+    cv_scores = cross_validate(
+        clf, X_scaled, y,
+        cv=cv,
+        scoring={
+            "accuracy":  "accuracy",
+            "roc_auc":   "roc_auc",
+            "precision": "precision_weighted",
+            "recall":    "recall_weighted",
+        },
+        n_jobs=-1,
+    )
+    ```
+
+    For continuous outcomes the target is binarized at the median before classifiers run, so the classifier multiverse is always available regardless of outcome type.
+
+    Feature importance is extracted via `feature_importances_` for tree-based models, normalized absolute coefficients for logistic regression, and permutation importance as a fallback for SVM.
+
+    <Tip>
+    The `CLASSIFIER_CV_FOLDS` environment variable overrides the default fold count of 3. Increase it for smaller datasets where 3-fold CV produces high-variance estimates.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Result fields
+
+Every regression specification record carries a consistent set of fields that the results table and specification curve consume:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `spec_id` | UUID | Unique identifier for this specification |
+| `model_family` | string | e.g. `"OLS"`, `"Lasso"`, `"OLS (Box-Cox λ=0.43)"` |
+| `predictor` | string | Primary predictor of interest for this spec |
+| `covariates` | list | Other variables included as adjusters |
+| `coefficient` | float | Estimated effect of the predictor |
+| `p_value` | float | Raw (uncorrected) p-value |
+| `p_value_corrected` | float | Benjamini-Hochberg corrected p-value |
+| `significant_corrected` | bool | `corrected_p < 0.05` |
+| `ci_lower` / `ci_upper` | float | 95% confidence interval |
+| `r_squared` | float | Model fit (pseudo-R² for logistic/quantile) |
+| `assumptions_met` | bool | Whether all assumption checks passed |
+| `assumption_details` | dict | Per-test results from assumption checks |
+| `covariate_roles` | list | Role classification per covariate |
+| `effect_size` | float | Cohen's f² (continuous) or \|coefficient\| (binary) |
+
+## Robustness interpretation
+
+```
+robustness_pct = significant_specs / total_specs × 100
+```
+
+| Robustness % | Interpretation |
+|-------------|----------------|
+| ≥ 80% | Strong finding — effect persists across nearly all modeling choices |
+| 60–80% | Moderate — effect is likely real but sensitive to some specifications |
+| < 50% | Weak — exercise caution; the result may depend on arbitrary choices |
+
+<Warning>
+A high robustness % confirms that the measured modeling choices do not drive the result. It does not address unmeasured confounding, which is a fundamental limitation of observational data that multiverse analysis cannot resolve.
+</Warning>

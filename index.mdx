@@ -1,97 +1,58 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Omniverse"
+description: "Combat p-hacking and unconscious bias in clinical research by running every valid statistical model simultaneously."
 ---
 
-## Setting up
+Omniverse is an AI-powered clinical research analysis platform that makes your findings reproducible. Instead of fitting one regression and hoping it's the right one, Omniverse runs every defensible model specification — different covariate combinations, model families, and transformations — then tells you what percentage of specifications agree with each other.
 
-Get your documentation site up and running in minutes.
+If your effect holds across 90% of specifications, it's robust. If it only appears in 10%, it's likely an artifact of your modeling choices.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Upload your CSV and run your first multiverse analysis in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts">
+    Understand multiverse analysis, robustness %, and the specification curve.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Using Omniverse" icon="chart-line" href="/guides/upload-data">
+    Walk through the full research workflow from data import to results.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Integrate Omniverse into your own tools via the REST API.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Upload your dataset">
+    Upload a CSV file. Omniverse profiles every column — detecting distributions, skewness, missing data, and potential encoding issues — then an AI assistant walks you through variable definitions.
+  </Step>
+  <Step title="Define your study intent">
+    Describe your hypothesis in plain English. Omniverse extracts the outcome variable, predictors, and confounders in a structured format before you see any results — eliminating post-hoc specification selection.
+  </Step>
+  <Step title="Run the multiverse analysis">
+    Omniverse runs every valid model specification: different covariate subsets, model families (OLS, penalized regression, logistic, quantile), and automatic robust alternatives when assumptions are violated.
+  </Step>
+  <Step title="Interpret your results">
+    Review the robustness percentage, specification curve, and per-specification DAGs. Ask the AI assistant plain-English questions about your findings. Export publication-ready plots.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Why multiverse analysis?
 
-## Need inspiration?
+P-hacking is endemic in clinical research. A researcher can unconsciously pick the model specification that gives them a significant p-value — choosing which covariates to include, which model family to use, or how to handle outliers in ways that inflate apparent significance.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+Omniverse makes that impossible to hide. By running all valid specifications simultaneously and applying Benjamini-Hochberg FDR correction across the entire family of tests, you get an honest picture of how robust your finding actually is.
+
+<CardGroup cols={3}>
+  <Card title="Multiverse analysis" icon="infinity" href="/methods/multiverse-analysis">
+    How exhaustive specification testing works
+  </Card>
+  <Card title="Assumption checks" icon="shield-check" href="/methods/assumption-checks">
+    Shapiro-Wilk, Breusch-Pagan, VIF, and more
+  </Card>
+  <Card title="FDR correction" icon="filter" href="/methods/fdr-correction">
+    Benjamini-Hochberg across all specifications
+  </Card>
+</CardGroup>

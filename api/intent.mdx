@@ -1,0 +1,292 @@
+---
+title: "Study Intent"
+description: "Guided conversational endpoints for defining the outcome variable, predictors, and covariates before running analysis."
+---
+
+Study intent defines the analytical question: which variable is the outcome, which are the predictors of interest, and which columns should be treated as covariates (confounders). Intent is gathered through a structured conversation and must be committed before calling [POST /analyze](/api/analyze).
+
+<Note>
+  All intent endpoints require a `session_id` from [POST /upload](/api/upload).
+</Note>
+
+## Conversation flow
+
+<Steps>
+  <Step title="Initialize">
+    Send `message: "__init__"` to receive the AI's opening question about the study design.
+  </Step>
+  <Step title="Converse">
+    Send regular messages to iteratively define the outcome, predictors, and covariates. The server tracks `intent_ready` and `missing_fields` after each turn.
+  </Step>
+  <Step title="Commit">
+    Send `message: "__commit__"` once `intent_ready` is `true`. The server extracts a structured intent object and locks it to the session.
+  </Step>
+</Steps>
+
+---
+
+## POST /intent-chat
+
+Non-streaming study intent conversation.
+
+### Request
+
+<ParamField body="session_id" type="string" required>
+  UUID of an active session.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The user message. Use `"__init__"` to start the conversation and `"__commit__"` to finalize and store the intent.
+</ParamField>
+
+<ParamField body="chat_history" type="array" required>
+  Full conversation history as an array of `{role, content}` objects. Pass an empty array `[]` for the first message.
+
+  <Expandable title="chat history item properties">
+    <ResponseField name="role" type="string">
+      Speaker role: `"user"` or `"assistant"`.
+    </ResponseField>
+    <ResponseField name="content" type="string">
+      Message text.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="intent_override" type="object">
+  Optional. When committing with `"__commit__"`, pass a pre-built intent object to bypass AI extraction. Useful when the UI tracks intent state independently. Fields are validated against actual column names in the session.
+
+  <Expandable title="intent_override properties">
+    <ResponseField name="outcome_variable" type="string">
+      Name of the outcome column.
+    </ResponseField>
+    <ResponseField name="predictors" type="string[]">
+      List of predictor column names.
+    </ResponseField>
+    <ResponseField name="confounders" type="string[]">
+      List of covariate/confounder column names.
+    </ResponseField>
+    <ResponseField name="hypothesis" type="string">
+      Free-text hypothesis statement.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Response — regular message
+
+<ResponseField name="response" type="string">
+  The AI's reply to the user message.
+</ResponseField>
+
+<ResponseField name="intent_ready" type="boolean">
+  `true` when outcome, predictors, and covariates have all been identified and the commit button should be enabled.
+</ResponseField>
+
+<ResponseField name="missing_fields" type="string[]">
+  Fields still needed before committing. Possible values: `"outcome"`, `"predictors"`, `"covariates"`.
+</ResponseField>
+
+<ResponseField name="intent_draft" type="object">
+  Current extracted intent. `null` until the AI has identified at least one field.
+
+  <Expandable title="intent_draft properties">
+    <ResponseField name="outcome_variable" type="string">
+      Identified outcome column name.
+    </ResponseField>
+    <ResponseField name="predictors" type="string[]">
+      Identified predictor column names (validated against actual columns).
+    </ResponseField>
+    <ResponseField name="confounders" type="string[]">
+      Identified covariate column names (validated against actual columns).
+    </ResponseField>
+    <ResponseField name="hypothesis" type="string">
+      Extracted hypothesis statement.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="covariates_auto_assigned" type="boolean">
+  `true` when covariates were automatically assigned. This happens when outcome and predictors are defined but no covariates were specified — all remaining columns are assigned as covariates.
+</ResponseField>
+
+### Response — `__init__` message
+
+```json
+{
+  "response": "Let's define your study. What is the outcome variable you want to predict or analyze?",
+  "intent_ready": false,
+  "missing_fields": ["outcome", "predictors", "covariates"],
+  "intent_draft": null,
+  "covariates_auto_assigned": false
+}
+```
+
+### Response — `__commit__` success
+
+<ResponseField name="committed" type="boolean">
+  Always `true` on successful commit.
+</ResponseField>
+
+<ResponseField name="intent" type="object">
+  The finalized, stored intent object.
+
+  <Expandable title="intent properties">
+    <ResponseField name="outcome_variable" type="string">
+      The committed outcome column name.
+    </ResponseField>
+    <ResponseField name="predictors" type="string[]">
+      The committed predictor column names.
+    </ResponseField>
+    <ResponseField name="confounders" type="string[]">
+      The committed covariate/confounder column names.
+    </ResponseField>
+    <ResponseField name="hypothesis" type="string">
+      The committed hypothesis statement.
+    </ResponseField>
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp of when the intent was committed.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response — `__commit__` incomplete
+
+<ResponseField name="committed" type="boolean">
+  Always `false` when intent is not ready.
+</ResponseField>
+
+<ResponseField name="intent_ready" type="boolean">
+  Always `false`.
+</ResponseField>
+
+<ResponseField name="missing_fields" type="string[]">
+  Fields that must still be defined before committing.
+</ResponseField>
+
+### Examples
+
+**Initialize the conversation:**
+
+```bash
+curl -X POST http://localhost:8000/intent-chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "message": "__init__",
+    "chat_history": []
+  }'
+```
+
+**Regular conversational turn:**
+
+```bash
+curl -X POST http://localhost:8000/intent-chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "message": "The outcome is Outcome (binary diabetes diagnosis). The main predictor is Glucose.",
+    "chat_history": [
+      {"role": "assistant", "content": "Let'\''s define your study. What is the outcome variable?"},
+      {"role": "user", "content": "The outcome is Outcome (binary diabetes diagnosis). The main predictor is Glucose."}
+    ]
+  }'
+```
+
+**Commit with override:**
+
+```bash
+curl -X POST http://localhost:8000/intent-chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "message": "__commit__",
+    "chat_history": [],
+    "intent_override": {
+      "outcome_variable": "Outcome",
+      "predictors": ["Glucose"],
+      "confounders": ["BMI", "Age", "BloodPressure"],
+      "hypothesis": "Higher glucose levels are associated with increased diabetes risk."
+    }
+  }'
+```
+
+```json
+{
+  "committed": true,
+  "intent": {
+    "outcome_variable": "Outcome",
+    "predictors": ["Glucose"],
+    "confounders": ["BMI", "Age", "BloodPressure"],
+    "hypothesis": "Higher glucose levels are associated with increased diabetes risk.",
+    "timestamp": "2024-03-10T14:30:00.000000"
+  }
+}
+```
+
+---
+
+## POST /intent-chat-stream
+
+Streaming version of the intent conversation. Emits chunk events during generation, then a final event with the complete response and intent state.
+
+**Content-Type of response:** `application/x-ndjson`
+
+### Request
+
+Same fields as [POST /intent-chat](#post-intent-chat).
+
+### Streamed events
+
+**Chunk events** (regular and `__init__` messages only):
+
+```json
+{"type": "chunk", "content": "Let's define"}
+{"type": "chunk", "content": " your study design."}
+```
+
+**Final event — regular message:**
+
+```json
+{
+  "type": "final",
+  "response": "Great, Outcome is set as the outcome variable...",
+  "intent_ready": false,
+  "missing_fields": ["covariates"],
+  "intent_draft": {
+    "outcome_variable": "Outcome",
+    "predictors": ["Glucose"],
+    "confounders": [],
+    "hypothesis": ""
+  },
+  "covariates_auto_assigned": false
+}
+```
+
+**Final event — `__commit__` success:**
+
+```json
+{"type": "final", "committed": true, "intent": {"outcome_variable": "Outcome", "predictors": ["Glucose"], "confounders": ["BMI", "Age"], "hypothesis": "...", "timestamp": "2024-03-10T14:30:00"}}
+```
+
+**Final event — `__commit__` incomplete:**
+
+```json
+{"type": "final", "committed": false, "intent_ready": false, "missing_fields": ["covariates"]}
+```
+
+**Error event:**
+
+```json
+{"type": "error", "error": "Session not found"}
+```
+
+---
+
+## Covariate auto-assignment
+
+If the user defines an outcome and predictors but does not specify any covariates, and has not explicitly stated they want no covariates, the system automatically assigns all remaining columns as covariates.
+
+The `covariates_auto_assigned: true` flag is returned in this case so the UI can inform the user.
+
+<Tip>
+  To explicitly declare that no covariates are needed, include phrases like "no covariates", "no confounders", or "no controls" in a message. The system recognizes these patterns and will not require covariates for commit.
+</Tip>

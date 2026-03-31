@@ -1,0 +1,170 @@
+---
+title: "POST /upload"
+description: "Upload a CSV file to create an analysis session and receive a full data profile."
+---
+
+Upload a CSV file to start an analysis session. The server reads the file, profiles every column, and asks an AI to generate an initial data review message. The returned `session_id` is required for all subsequent API calls.
+
+## Request
+
+**Method:** `POST /upload`  
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="file" type="file" required>
+  The CSV file to analyze. Must be a valid comma-separated values file readable by pandas.
+</ParamField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/upload \
+  -F "file=@pima_diabetes.csv"
+```
+
+## Response
+
+<ResponseField name="session_id" type="string" required>
+  UUID that uniquely identifies this analysis session. Pass this value in the body of every subsequent request.
+</ResponseField>
+
+<ResponseField name="profile" type="object" required>
+  Full statistical profile of the uploaded dataset.
+
+  <Expandable title="profile properties">
+    <ResponseField name="rows" type="integer">
+      Total number of rows in the dataset.
+    </ResponseField>
+    <ResponseField name="columns" type="integer">
+      Total number of columns in the dataset.
+    </ResponseField>
+    <ResponseField name="missing_total_pct" type="float">
+      Overall missing data percentage across all cells, rounded to one decimal place.
+    </ResponseField>
+    <ResponseField name="column_profiles" type="array">
+      One profile object per column.
+
+      <Expandable title="column profile properties">
+        <ResponseField name="name" type="string">
+          Column name as it appears in the CSV header.
+        </ResponseField>
+        <ResponseField name="dtype" type="string">
+          pandas dtype string (e.g. `int64`, `float64`, `object`).
+        </ResponseField>
+        <ResponseField name="unique" type="integer">
+          Number of distinct non-null values.
+        </ResponseField>
+        <ResponseField name="missing" type="integer">
+          Count of null/NaN values in this column.
+        </ResponseField>
+        <ResponseField name="missing_pct" type="float">
+          Percentage of values that are missing, rounded to one decimal place.
+        </ResponseField>
+        <ResponseField name="mean" type="float">
+          Arithmetic mean. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="std" type="float">
+          Standard deviation. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="min" type="float">
+          Minimum value. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="max" type="float">
+          Maximum value. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="skewness" type="float">
+          Fisher-Pearson skewness coefficient. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="is_skewed" type="boolean">
+          `true` when `|skewness| > 1`. Present for numeric columns only.
+        </ResponseField>
+        <ResponseField name="distribution" type="string">
+          Inferred distribution class. One of `"binary"`, `"count/ordinal"`, `"continuous"`, or `"categorical"`.
+        </ResponseField>
+        <ResponseField name="histogram" type="integer[]">
+          Bin counts for the column histogram. For continuous columns: 12 equal-width bins. For binary/ordinal/categorical columns: one count per unique value (top 12 categories for large cardinality columns).
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="chat_messages" type="array">
+  Initial AI-generated data review. Contains one message with `role: "assistant"` and a markdown-formatted analysis of the uploaded dataset.
+
+  <Expandable title="message properties">
+    <ResponseField name="role" type="string">
+      Always `"assistant"` for the initial message.
+    </ResponseField>
+    <ResponseField name="content" type="string">
+      AI-generated review text in markdown format.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "profile": {
+    "rows": 768,
+    "columns": 9,
+    "missing_total_pct": 0.0,
+    "column_profiles": [
+      {
+        "name": "Pregnancies",
+        "dtype": "int64",
+        "unique": 17,
+        "missing": 0,
+        "missing_pct": 0.0,
+        "mean": 3.8451,
+        "std": 3.3696,
+        "min": 0.0,
+        "max": 17.0,
+        "skewness": 0.9017,
+        "is_skewed": false,
+        "distribution": "count/ordinal",
+        "histogram": [110, 135, 103, 75, 68, 57, 50, 45, 38, 28]
+      },
+      {
+        "name": "Outcome",
+        "dtype": "int64",
+        "unique": 2,
+        "missing": 0,
+        "missing_pct": 0.0,
+        "mean": 0.349,
+        "std": 0.4768,
+        "min": 0.0,
+        "max": 1.0,
+        "skewness": 0.6358,
+        "is_skewed": false,
+        "distribution": "binary",
+        "histogram": [500, 268]
+      }
+    ]
+  },
+  "chat_messages": [
+    {
+      "role": "assistant",
+      "content": "Your dataset has **768 rows** and **9 columns** with no missing data..."
+    }
+  ]
+}
+```
+
+<Tip>
+  Store the `session_id` immediately — it is only returned once. All subsequent endpoints require it.
+</Tip>
+
+## Distribution inference rules
+
+The `distribution` field is determined automatically:
+
+| Condition | Value |
+|-----------|-------|
+| Numeric column with exactly 2 unique values | `"binary"` |
+| Integer column with fewer than 10 unique values | `"count/ordinal"` |
+| All other numeric columns | `"continuous"` |
+| Non-numeric columns | `"categorical"` |
+
+You can override the inferred distribution using [POST /update-variable](/api/chat) or by chatting with the AI via [POST /chat](/api/chat).

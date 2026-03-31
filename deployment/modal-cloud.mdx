@@ -1,0 +1,173 @@
+---
+title: "Modal cloud deployment"
+description: "Route heavy compute from the Omniverse backend to Modal serverless containers for parallel specification fitting and faster analysis on large datasets."
+---
+
+<Note>
+  Modal integration is fully wired into Omniverse and ready to use. Set `USE_MODAL=1` and deploy the Modal app to enable it. This is a hackathon POC — the integration works end-to-end but needs production hardening before serving real users.
+</Note>
+
+## How it works
+
+By default, Omniverse runs all analysis locally inside the FastAPI process. When `USE_MODAL=1` is set, `modal_client.py` transparently routes the compute-intensive functions to Modal serverless containers instead.
+
+The FastAPI backend remains the orchestrator throughout — it handles uploads, session state, LLM calls, and serving static plots. Modal handles only the CPU-intensive work.
+
+```
+Browser → FastAPI (orchestrator)
+               ├── LLM calls (always local, via Anthropic API)
+               ├── Session management (always local, in-memory)
+               └── USE_MODAL=1 → Modal containers
+                        ├── run_analysis_remote        (multiverse regressions)
+                        ├── run_classifiers_remote     (ML classifier sweep)
+                        ├── generate_plots_remote      (regression plots + DAGs)
+                        ├── generate_classifier_artifacts_remote (classifier plots + DAGs)
+                        └── generate_distribution_plots_remote   (variable histograms)
+```
+
+Plot PNGs are generated on Modal, encoded as base64, returned to the backend, and written to the local `backend/plots/` directory. FastAPI's `StaticFiles` mount at `/plots/` then serves them to the frontend — no base64 blobs in API responses.
+
+### Performance characteristics
+
+- **Cold start**: approximately 3 seconds for the first invocation after a container is recycled.
+- **Parallelism**: multiple specifications are fitted across Modal's auto-scaled container pool simultaneously, rather than serially in a single Python process.
+- **Large datasets**: with many confounders, covariate subsets grow as O(2ⁿ). Modal's horizontal scaling makes this tractable where a single process would time out.
+
+## Setup
+
+<Steps>
+  <Step title="Install the Modal package">
+
+    ```bash
+    pip install modal
+    ```
+
+    Modal is already listed in `backend/requirements.txt`, so this step is only needed if you are setting up a standalone environment.
+  </Step>
+
+  <Step title="Authenticate with Modal">
+    Run the following command to open the Modal dashboard and link your account:
+
+    ```bash
+    modal setup
+    ```
+
+    This writes credentials to `~/.modal.toml`. You can also provide `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` as environment variables instead.
+  </Step>
+
+  <Step title="Enable Modal in the backend">
+    Set `USE_MODAL=1` before starting the FastAPI server.
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export USE_MODAL=1
+    ANALYSIS_ENABLE_CLASSIFIERS=1 uvicorn main:app --reload --port 8000
+    ```
+
+    ```bash Windows (Command Prompt)
+    set USE_MODAL=1
+    uvicorn main:app --reload --port 8000
+    ```
+
+    </CodeGroup>
+
+    `modal_client.py` reads this variable at import time:
+
+    ```python
+    USE_MODAL = os.environ.get("USE_MODAL", "").strip() in ("1", "true", "yes")
+    ```
+
+    If the variable is absent or set to anything else, every function falls back to its local implementation automatically.
+  </Step>
+
+  <Step title="Deploy the Modal app">
+    Deploy `modal_app.py` to register the remote functions with Modal's infrastructure:
+
+    ```bash
+    cd backend
+    modal deploy modal_app.py
+    ```
+
+    This builds the container image and registers the app as `multiverse-analysis` on Modal. You only need to redeploy when the analysis code or dependencies change.
+  </Step>
+</Steps>
+
+## Container image
+
+`modal_app.py` defines a single container image named `multiverse-analysis` built on Debian slim with Python 3.11:
+
+```python
+analysis_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "numpy", "pandas", "scipy", "statsmodels",
+        "scikit-learn", "matplotlib", "xgboost",
+    )
+    .add_local_file("analysis_engine.py", "/root/analysis_engine.py")
+    .add_local_file("classifier_engine.py", "/root/classifier_engine.py")
+    .add_local_file("plot_generator.py", "/root/plot_generator.py")
+    .add_local_file("covariate_roles.py", "/root/covariate_roles.py")
+)
+```
+
+The local source files are bundled into the image at deploy time. Rerun `modal deploy modal_app.py` after editing any of those files.
+
+## Remote functions
+
+All remote functions are decorated with `@app.function(image=analysis_image)` and registered under the `multiverse-analysis` app. `modal_client.py` looks them up by name at call time via `modal.Function.from_name("multiverse-analysis", "<function_name>")`.
+
+| Remote function | Timeout | What it does |
+| --- | --- | --- |
+| `run_analysis_remote` | 300 s | Runs the full multiverse regression sweep via `run_multiverse_analysis()` from `analysis_engine.py`. Accepts the DataFrame serialised as JSON (`orient="split"`) plus `outcome`, `predictors`, `confounders`, and `hypothesis`. Returns the full results dict. |
+| `run_classifiers_remote` | 300 s | Runs the ML classifier sweep across feature subsets via `run_classifiers()` from `classifier_engine.py`. Returns classifier results, summary statistics, and per-spec accuracy / AUC. |
+| `generate_plots_remote` | 300 s | Batch-generates all regression scatter plots and per-specification DAGs. Returns `plot_map`, `dag_map`, and `plot_files` (filename → base64 PNG). |
+| `generate_classifier_artifacts_remote` | 300 s | Batch-generates classifier feature-importance bar charts and DAGs for every classifier spec in one remote call. Returns `classifier_plot_map`, `classifier_dag_map`, and `plot_files`. |
+| `generate_distribution_plots_remote` | 300 s | Batch-generates variable distribution histograms for all outcome, predictor, and covariate columns. Accepts a list of `{"col_name": str, "role": str}` items. Returns `distribution_plot_map` and `plot_files`. |
+| `generate_single_plot_remote` | 120 s | Generates one plot of a specified type (`"feature_importance"`, `"distribution"`, or `"dag"`). Used for ad-hoc individual plot requests. |
+
+## Local fallback
+
+Each function in `modal_client.py` checks `USE_MODAL` and falls back to a direct local import when it is not set. This makes the codebase portable — it runs on a laptop without any Modal account.
+
+```python
+def run_analysis(df, outcome, predictors, confounders, hypothesis=""):
+    if USE_MODAL:
+        import modal
+        f = modal.Function.from_name("multiverse-analysis", "run_analysis_remote")
+        df_json = df.to_json(orient="split")
+        return f.remote(df_json=df_json, outcome=outcome, ...)
+    else:
+        from analysis_engine import run_multiverse_analysis
+        return run_multiverse_analysis(df=df, outcome=outcome, ...)
+```
+
+The same pattern applies to `run_classifiers_call`, `generate_all_plots_call`, `generate_classifier_artifacts_call`, and `generate_distribution_plots_call`.
+
+## Plot file handling
+
+Generated plots are saved to `backend/plots/` in both local and Modal modes. The `PLOT_DIR` constant is defined in `modal_client.py` and imported by `main.py`:
+
+```python
+# modal_client.py
+PLOT_DIR = Path(__file__).parent / "plots"
+PLOT_DIR.mkdir(exist_ok=True)
+```
+
+When running on Modal, the remote function saves PNGs inside the container, encodes them as base64, and returns them in the `plot_files` dict. The `_write_plot_files()` helper in `modal_client.py` then decodes and writes each file to the local `plots/` directory so that FastAPI's `StaticFiles` mount at `/plots/` can serve them.
+
+<Tip>
+  The `plots/` directory persists between analysis runs. If you want a clean slate, delete its contents before starting the backend.
+</Tip>
+
+## Production considerations
+
+<Warning>
+  Omniverse is a hackathon proof-of-concept. The Modal integration works end-to-end but is not production-hardened. Before deploying to real users, consider the following.
+</Warning>
+
+- **Credentials** — `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` should be stored in a secrets manager, not exported directly in shell profiles.
+- **Timeouts** — all remote functions use a 300-second timeout. Large datasets with many confounders may exceed this. Adjust the `timeout` parameter in `modal_app.py` as needed.
+- **Async job queue** — the `/analyze` endpoint is synchronous and blocks until Modal returns. For production use, replace this with an async job queue and a polling or webhook mechanism.
+- **Error handling** — Modal cold-start failures and network errors surface as unhandled exceptions today. Add retry logic and user-facing error states.
+- **Image rebuild** — `modal deploy` must be rerun whenever `analysis_engine.py`, `classifier_engine.py`, `plot_generator.py`, or `covariate_roles.py` change. A CI step that deploys on merge to main is recommended.

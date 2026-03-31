@@ -1,0 +1,226 @@
+---
+title: "Core concepts"
+description: "The statistical ideas behind Omniverse: multiverse analysis, robustness %, the specification curve, FDR correction, covariate roles, and model families."
+---
+
+Understanding these concepts helps you interpret Omniverse results correctly and defend your findings to reviewers.
+
+<AccordionGroup>
+
+  <Accordion title="Multiverse analysis" icon="infinity" defaultOpen={true}>
+    Traditional analysis picks one model specification — a particular set of covariates, a particular model family, a particular handling of outliers — and reports the result. The problem is that this choice is rarely made blind. Researchers (consciously or not) tend to pick the specification that makes their hypothesis look best.
+
+    **Multiverse analysis** runs every valid specification simultaneously. If you have a predictor of interest, k confounders, and several model families, Omniverse fits:
+
+    - Every non-empty subset of confounders (up to a configurable cap)
+    - Every applicable model family (OLS, penalized, logistic, quantile — see below)
+    - Every robust alternative when statistical assumptions are violated
+
+    The result is a family of estimates, not a single estimate. The distribution of those estimates tells you how much your conclusion depends on modeling choices.
+
+    A typical Pima diabetes run (3 predictors, 5 confounders) produces **350–400 regression specifications** and **~25 classifier specifications**. All are visible and filterable in the results table.
+
+    Multiverse analysis was formalised by Steiger & McCulloch and is increasingly required by top journals in clinical research, psychology, and epidemiology.
+
+    <Tip>
+      Read the full methodology in [Multiverse analysis](/methods/multiverse-analysis).
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Robustness %" icon="shield-check">
+    The **robustness percentage** is the headline metric in Omniverse. It answers:
+
+    > "What share of all specifications found the predictor's effect to be statistically significant?"
+
+    Specifically, it is the share of specifications where the predictor's FDR-corrected p-value is below 0.05.
+
+    | Robustness % | Interpretation |
+    |---|---|
+    | 80% or above | Strong finding — effect holds across most defensible models |
+    | 50–79% | Moderate — effect present but sensitive to modeling choices |
+    | Below 50% | Weak — treat with caution; effect may depend on arbitrary choices |
+
+    A high robustness % does not mean your predictor is causally important — it means the statistical association is not a modeling artifact. Unmeasured confounders remain a fundamental limitation of observational data.
+
+    <Warning>
+      Robustness % is computed after FDR correction across the entire family of specifications. A finding significant in 90% of raw models may have a much lower robustness % after correction — this is intentional and correct behaviour.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Specification curve" icon="chart-line">
+    The **specification curve** is a plot of every model specification sorted by effect size. It is one of the clearest ways to visualise multiverse results.
+
+    - **X axis** — specifications ordered from smallest to largest effect size
+    - **Y axis** — the effect size estimate (coefficient for continuous outcomes, log odds ratio for binary)
+    - **Green dots** — specifications that are statistically significant after FDR correction (corrected p < 0.05)
+    - **Grey dots** — specifications that are not significant after correction
+
+    **How to read it:**
+
+    - A tight band of green dots clustered together means the effect is real and consistent regardless of modeling choices.
+    - Green dots scattered across the full range, or a mix of green and grey, means the significance depends on which covariates you include or which model family you choose.
+    - All grey dots means no specification produced a significant result after multiplicity correction.
+
+    Each dot in the curve corresponds to a row in the specification table below it. Click any dot to see the exact model: covariate set, model family, coefficient, raw p-value, corrected p-value, and the DAG for that specification.
+  </Accordion>
+
+  <Accordion title="Model families" icon="function">
+    Omniverse selects model families automatically based on outcome type and assumption check results.
+
+    **Continuous outcomes** (assumed by default, switches to robust alternatives if assumptions violated):
+
+    | Model | When used | Notes |
+    |---|---|---|
+    | OLS | Assumptions met | Baseline ordinary least squares |
+    | Lasso | Always | L1 penalty (α = 0.1), StandardScaler applied |
+    | Ridge | Always | L2 penalty (α = 1.0), StandardScaler applied |
+    | ElasticNet | Always | L1 + L2 (α = 0.1, l1_ratio = 0.5) |
+    | OLS (Log Y) | Assumptions violated, Y > 0 | Natural log transform of outcome |
+    | OLS (Box-Cox) | Assumptions violated, Y > 0 | Box-Cox transform, λ chosen by MLE |
+    | Quantile (median) | Assumptions violated | Median regression via `QuantReg` |
+
+    **Binary outcomes:**
+
+    | Model | Notes |
+    |---|---|
+    | Logistic | `statsmodels` Logit, full inference |
+    | Logistic (Lasso) | scikit-learn, L1 penalty, SAGA solver |
+    | Logistic (Ridge) | scikit-learn, L2 penalty, LBFGS solver |
+    | Effect Measures | Odds ratio, risk ratio, risk difference from the 2×2 table (binary predictors only) |
+
+    **Classifiers** (enabled via `ANALYSIS_ENABLE_CLASSIFIERS=1`):
+
+    Classifiers run across all covariate subsets with 3-fold stratified cross-validation. Metrics reported: accuracy, AUC, precision, recall.
+
+    | Classifier | Notes |
+    |---|---|
+    | Random Forest | sklearn default hyperparameters |
+    | Gradient Boosting | sklearn GradientBoostingClassifier |
+    | XGBoost | `xgboost` library |
+    | SVM (RBF kernel) | sklearn SVC with probability=True |
+    | Logistic Regression | sklearn, included for classifier comparison |
+
+    <Info>
+      Classifiers do not contribute to the robustness % or specification curve — those are regression-only metrics. Classifier results appear in a separate panel with their own accuracy and AUC summary.
+    </Info>
+  </Accordion>
+
+  <Accordion title="Assumption checks" icon="circle-check">
+    Before deciding which model families to run, Omniverse automatically checks whether standard assumptions hold for the data and covariate set in each specification.
+
+    **For continuous outcomes (OLS assumptions):**
+
+    | Check | Test | Threshold |
+    |---|---|---|
+    | Normality of residuals | Shapiro-Wilk | p > 0.05 |
+    | Homoscedasticity | Breusch-Pagan | p > 0.05 |
+    | Multicollinearity | VIF | Max VIF < 10 |
+
+    If any assumption is violated, Omniverse automatically adds log-transform OLS, Box-Cox OLS, and quantile regression to the specification set. The violated-assumption models are flagged in the results table.
+
+    **For binary outcomes (logistic regression assumptions):**
+
+    | Check | Threshold |
+    |---|---|
+    | Events per variable | ≥ 10 events per predictor |
+    | Minority class size | > 5% of total observations |
+
+    Assumption check details are stored per specification and shown in the expandable row of the results table.
+
+    <Tip>
+      Read the full assumption check documentation at [Assumption checks](/methods/assumption-checks).
+    </Tip>
+  </Accordion>
+
+  <Accordion title="FDR correction" icon="filter">
+    Running hundreds of models without correcting for multiple comparisons would inflate false positives badly. At α = 0.05 with 300 specifications, you'd expect about 15 spurious significant results by chance alone.
+
+    Omniverse applies **Benjamini-Hochberg (BH) FDR correction** across all p-values from all specifications simultaneously — not per-model or per-family.
+
+    The BH procedure:
+
+    1. Sort all p-values from smallest to largest: p₁ ≤ p₂ ≤ … ≤ pₘ
+    2. For each rank k, compute the adjusted p-value: p̃ₖ = min(pₖ × m/k, 1)
+    3. Enforce monotonicity (step-up): the adjusted p-value at rank k cannot exceed the adjusted p-value at rank k+1
+    4. A specification is significant if its corrected p-value < 0.05
+
+    This controls the **false discovery rate** — the expected proportion of false positives among all discoveries — at 5%. It is less conservative than Bonferroni correction (which controls family-wise error rate) and more appropriate when you want to maximise sensitivity across a large family of related tests.
+
+    The corrected p-values are what drive:
+    - The **robustness %** (share of specs with corrected p < 0.05)
+    - The **green/grey colouring** on the specification curve
+    - The `significant_corrected` flag on every result row
+
+    <Tip>
+      Read the full methodology at [FDR correction](/methods/fdr-correction).
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Covariate roles" icon="sitemap">
+    Not all covariates play the same role in a causal model. Omniverse classifies each covariate automatically using the **change-in-estimate method** and displays the role on the DAG for each specification.
+
+    | Role | Definition | Effect on estimate |
+    |---|---|---|
+    | **Confounder** | A variable that causes both the predictor and the outcome | Adding it shifts the primary coefficient by more than 10% |
+    | **Mediator** | A variable on the causal pathway from predictor to outcome | Detected via temporal and domain heuristics |
+    | **Precision variable** | A variable that predicts the outcome but is not a confounder | Reduces standard error without meaningfully changing the estimate |
+    | **Neutral** | No material effect on the estimate or its precision | Neither shifts coefficient nor reduces SE substantially |
+
+    The classification is computed once per unique predictor/covariate set and cached. Each specification's DAG is coloured by role so you can see the causal structure at a glance.
+
+    <Warning>
+      Covariate role classification is based on observed associations in your data, not on domain knowledge. A variable classified as a precision variable may still be a confounder if the confounding pathway operates through unmeasured variables. Use the DAG as a starting point for discussion, not a ground truth.
+    </Warning>
+
+    <Tip>
+      Read the full methodology at [Covariate classification](/methods/covariate-classification).
+    </Tip>
+  </Accordion>
+
+  <Accordion title="DAGs per specification" icon="diagram-project">
+    Each specification in the results table has an associated **Directed Acyclic Graph (DAG)** that shows the causal structure assumed by that model.
+
+    DAG nodes are:
+
+    - **Outcome variable** — shown in a distinct colour (typically blue)
+    - **Primary predictor** — the variable whose effect is being estimated (typically green)
+    - **Covariates** — coloured by role: confounder (red), mediator (orange), precision variable (purple), neutral (grey)
+
+    Edges represent assumed causal directions. Variables not included in a given specification are absent from its DAG — this is how you can see the difference between a model with and without a key confounder.
+
+    DAGs are generated server-side using matplotlib (Agg backend) and served as PNGs from `/plots/`. Click any row in the specification table to view its DAG inline.
+  </Accordion>
+
+</AccordionGroup>
+
+## Terminology quick reference
+
+| Term | Definition |
+|---|---|
+| Specification | A single model run: one predictor, one covariate set, one model family |
+| Robustness % | Share of specifications significant after FDR correction |
+| Spec curve | All specifications sorted by effect size, coloured by significance |
+| FDR | False discovery rate — controlled at 5% by Benjamini-Hochberg |
+| BH correction | Benjamini-Hochberg multiple testing correction |
+| Confounder | Covariate that shifts the primary coefficient >10% when included |
+| Mediator | Covariate on the causal pathway between predictor and outcome |
+| Precision variable | Covariate that reduces SE without shifting the coefficient |
+| VIF | Variance Inflation Factor — multicollinearity diagnostic (pass threshold: max VIF < 10) |
+| AUC | Area Under the ROC Curve — classifier discrimination metric |
+
+## Further reading
+
+<CardGroup cols={2}>
+  <Card title="Multiverse analysis" icon="infinity" href="/methods/multiverse-analysis">
+    Full methodology: specification generation, powerset construction, and the O(2ⁿ) combinatorics
+  </Card>
+  <Card title="Assumption checks" icon="shield-check" href="/methods/assumption-checks">
+    Shapiro-Wilk, Breusch-Pagan, VIF — thresholds, implementation, and fallback models
+  </Card>
+  <Card title="FDR correction" icon="filter" href="/methods/fdr-correction">
+    Benjamini-Hochberg step-by-step, monotonicity enforcement, and comparison with Bonferroni
+  </Card>
+  <Card title="Covariate classification" icon="sitemap" href="/methods/covariate-classification">
+    Change-in-estimate method, mediator detection heuristics, and DAG generation
+  </Card>
+</CardGroup>

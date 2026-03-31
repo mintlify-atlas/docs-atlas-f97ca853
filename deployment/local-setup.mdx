@@ -1,0 +1,149 @@
+---
+title: "Local setup"
+description: "Run the Omniverse clinical research analysis platform on your own machine for development and experimentation."
+---
+
+<Info>
+  **Prerequisites**
+
+  - Python 3.11 or higher
+  - Node.js 18 or higher
+  - An [Anthropic API key](https://console.anthropic.com/) with access to Claude
+</Info>
+
+## Overview
+
+Omniverse runs as two separate processes: a FastAPI backend that handles data processing, multiverse analysis, and LLM integration, and a Next.js frontend. Both must be running for the application to work.
+
+## Backend setup
+
+<Steps>
+  <Step title="Create and activate a virtual environment">
+    From the repository root, create a Python virtual environment inside the `backend/` directory.
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    cd backend
+    python -m venv venv
+    source venv/bin/activate
+    ```
+
+    ```bash Windows
+    cd backend
+    python -m venv venv
+    venv\Scripts\activate
+    ```
+
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install Python dependencies">
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    This installs FastAPI, pandas, numpy, scipy, statsmodels, scikit-learn, matplotlib, anthropic, and modal.
+  </Step>
+
+  <Step title="Set your Anthropic API key">
+    Omniverse uses Claude for variable profiling, study intent extraction, and results chat. Export your API key before starting the server.
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export ANTHROPIC_API_KEY=your_key_here
+    ```
+
+    ```bash Windows (Command Prompt)
+    set ANTHROPIC_API_KEY=your_key_here
+    ```
+
+    ```powershell Windows (PowerShell)
+    $env:ANTHROPIC_API_KEY="your_key_here"
+    ```
+
+    </CodeGroup>
+  </Step>
+
+  <Step title="Start the backend server">
+
+    ```bash
+    ANALYSIS_ENABLE_CLASSIFIERS=1 uvicorn main:app --reload --port 8000
+    ```
+
+    The backend starts at `http://localhost:8000`. The `--reload` flag restarts the server automatically when source files change.
+  </Step>
+</Steps>
+
+### Convenience script
+
+The repository includes a `start.sh` script that activates the virtual environment and starts the backend in one command. Run it from the repository root:
+
+```bash
+./start.sh
+```
+
+<Note>
+  `start.sh` assumes the virtual environment is already created at `backend/venv` and that `ANTHROPIC_API_KEY` is already set in your shell environment.
+</Note>
+
+## Frontend setup
+
+<Steps>
+  <Step title="Install Node dependencies">
+
+    ```bash
+    cd frontend
+    npm install
+    ```
+
+    This installs Next.js 15, React 19, Tailwind CSS, Radix UI, Recharts, and TanStack Table.
+  </Step>
+
+  <Step title="Start the development server">
+
+    ```bash
+    npm run dev
+    ```
+
+    The frontend starts at `http://localhost:3000` and proxies API requests to the backend.
+  </Step>
+</Steps>
+
+## Accessing the application
+
+| Service | URL | Notes |
+| --- | --- | --- |
+| Frontend | `http://localhost:3000` | Next.js dev server with hot reload |
+| Backend API | `http://localhost:8000` | FastAPI application |
+| Interactive API docs | `http://localhost:8000/docs` | FastAPI auto-generated Swagger UI |
+| Generated plots | `http://localhost:8000/plots/` | Static PNG files served by FastAPI |
+
+<Tip>
+  Open `http://localhost:8000/docs` to explore and test all API endpoints interactively. This is useful when debugging analysis results or checking session state.
+</Tip>
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | — | **Required.** Authenticates requests to the Claude API. |
+| `ANALYSIS_ENABLE_CLASSIFIERS` | `1` | Set to `0` to skip ML classifier runs. Useful when iterating quickly on smaller datasets. |
+| `ANALYSIS_MAX_COVARIATE_SETS` | `0` (unlimited) | Cap the number of covariate subsets generated. Set to a positive integer to limit spec count on large datasets with many confounders. |
+| `CLASSIFIER_CV_FOLDS` | `3` | Number of stratified cross-validation folds for classifier evaluation. Increase for small datasets where 3-fold CV produces high-variance estimates. |
+| `USE_MODAL` | `0` | Route compute-intensive work to Modal serverless containers instead of running locally. See [Modal cloud deployment](/deployment/modal-cloud). |
+
+## Known limitations
+
+<Warning>
+  Omniverse is a hackathon proof-of-concept. The local deployment has several constraints you should be aware of before using it with sensitive or large datasets.
+</Warning>
+
+- **In-memory sessions** — all uploaded data and analysis results are held in a Python dict in the server process. Restarting the backend loses all session state.
+- **Single process** — `uvicorn` runs in a single worker. Concurrent analysis requests will block each other.
+- **No authentication** — the API is fully open. Do not expose the backend port to untrusted networks.
+- **No persistence** — there is no database. Results are not saved between server restarts.
+
+For compute-intensive workloads or to run analysis in parallel across many specifications, see [Modal cloud deployment](/deployment/modal-cloud).

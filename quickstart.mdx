@@ -1,80 +1,187 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Set up Omniverse locally and run your first multiverse analysis in under ten minutes."
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before you start, make sure you have the following:
 
-### Step 1: Set up your local environment
+- **Python 3.11** — the backend requires exactly 3.11 for dependency compatibility
+- **Node.js 18+** — for the Next.js 14 frontend
+- **An Anthropic API key** — Omniverse uses Claude claude-sonnet-4-6 for data profiling, study intent extraction, and results chat. Get a key at [console.anthropic.com](https://console.anthropic.com).
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Info>
+  Omniverse runs entirely on your machine. Your CSV data is never sent to any external service other than Anthropic for the AI chat features.
+</Info>
 
-### Step 2: Deploy your changes
+## Setup
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/abhiparuchuri/multiverse
+    cd multiverse
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Set up the backend">
+    Create a virtual environment, install dependencies, and set your API key.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    <CodeGroup>
 
-### Step 3: Go live
+    ```bash macOS / Linux
+    cd backend
+    python3.11 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash Windows
+    cd backend
+    py -3.11 -m venv venv
+    venv\Scripts\activate
+    pip install -r requirements.txt
+    ```
+
+    </CodeGroup>
+
+    Set your Anthropic API key in the same terminal session before starting the server:
+
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    ```
+
+    Start the API server:
+
+    ```bash
+    uvicorn main:app --reload --port 8000
+    ```
+
+    The API will be available at `http://localhost:8000`. The interactive API docs are at `http://localhost:8000/docs`.
+
+    <Tip>
+      The `start.sh` script in the repo root combines the activation and server start into one command and enables classifiers automatically: `bash start.sh`
+    </Tip>
+  </Step>
+
+  <Step title="Set up the frontend">
+    Open a new terminal from the repo root:
+
+    ```bash
+    cd frontend
+    npm install
+    npm run dev
+    ```
+
+    The Next.js dev server starts on port 3000.
+  </Step>
+
+  <Step title="Open the app">
+    Navigate to [http://localhost:3000](http://localhost:3000) in your browser. You should see the Omniverse upload screen.
+  </Step>
+
+  <Step title="Upload a CSV">
+    Click **Upload CSV** and select your dataset. If you don't have one handy, the [Pima Indians Diabetes dataset](https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database) is a good starting point — it has a binary outcome (`Outcome`), clear predictors (`Glucose`, `BMI`, `Age`), and several confounders (`Pregnancies`, `BloodPressure`, `SkinThickness`).
+
+    After upload, Omniverse profiles every column and opens an AI chat session. You'll see:
+
+    - Row and column counts
+    - Per-column distribution type (binary, continuous, count/ordinal, categorical)
+    - Missing data percentages
+    - Skewness flags for numeric columns
+
+    The AI assistant then summarises what it found and asks you to confirm or correct variable roles.
+  </Step>
+
+  <Step title="Define your variables">
+    Chat with the AI to rename columns, correct data types, or apply transformations. For example:
+
+    > "Rename `DiabetesPedigreeFunction` to `family_history_score` and treat it as continuous."
+
+    The AI applies the rename immediately and updates the column profile. You can revert any change from the modification history panel.
+
+    When the column definitions look right, click **Continue to study intent**.
+  </Step>
+
+  <Step title="Define your study intent">
+    Describe your hypothesis in plain English:
+
+    > "I want to know whether glucose level predicts diabetes outcome, controlling for BMI and age."
+
+    Omniverse extracts:
+
+    - **Outcome variable** — the column you're trying to explain (`Outcome`)
+    - **Predictors** — the variables whose effect you're testing (`Glucose`)
+    - **Confounders** — variables to control for (`BMI`, `Age`)
+
+    Review the extracted intent in the structured panel. If anything looks wrong, correct it in the chat or edit the fields directly. When you're satisfied, click **Run analysis**.
+  </Step>
+
+  <Step title="Review your results">
+    Analysis typically takes 15–60 seconds depending on dataset size and whether classifiers are enabled. For a Pima diabetes run with 3 predictors and 5 confounders, expect around 350–400 regression specifications.
+
+    The results screen shows:
+
+    - **Robustness %** — the share of specifications where the predictor's effect is significant after FDR correction
+    - **Specification curve** — every model sorted by effect size; green dots are significant after correction, grey are not
+    - **Classifier results** — Random Forest, Gradient Boosting, XGBoost, SVM, and Logistic Regression benchmarks with 3-fold cross-validation
+    - **Distribution plots** — per-variable histograms and summary statistics
+    - **Results chat** — ask plain-English questions about your findings
+
+    Use the filter and sort controls in the specification table to drill into specific model families or covariate combinations.
+  </Step>
+</Steps>
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | **Required.** Your Anthropic API key. |
+| `ANALYSIS_ENABLE_CLASSIFIERS` | `1` | Set to `0` to skip classifier runs and speed up analysis. |
+| `ANALYSIS_MAX_COVARIATE_SETS` | `0` (unlimited) | Cap the number of covariate subsets to limit runtime on large datasets. |
+| `CLASSIFIER_CV_FOLDS` | `3` | Stratified cross-validation folds for classifiers. Increase for small datasets. |
+| `USE_MODAL` | `0` | Set to `1` to route compute to Modal serverless containers instead of running locally. |
+
+## Enabling classifiers
+
+Classifier analysis (Random Forest, Gradient Boosting, XGBoost, SVM, Logistic Regression) is controlled by the `ANALYSIS_ENABLE_CLASSIFIERS` environment variable. It defaults to enabled in `start.sh`:
+
+```bash
+ANALYSIS_ENABLE_CLASSIFIERS=1 uvicorn main:app --reload --port 8000
+```
+
+To disable classifiers and get faster results for regression-only analysis:
+
+```bash
+ANALYSIS_ENABLE_CLASSIFIERS=0 uvicorn main:app --reload --port 8000
+```
+
+Each classifier runs 3-fold stratified cross-validation across all covariate subsets, so disabling this option significantly reduces analysis time on larger datasets.
+
+<Note>
+  Omniverse is a proof-of-concept with no authentication layer and no persistent storage. All session data lives in memory and is lost when the backend process restarts. Do not use it with sensitive or patient-identifiable data in its current form.
+</Note>
+
+## Scaling beyond a laptop
+
+Modal serverless compute is already integrated. Set `USE_MODAL=1` in your environment to route `run_analysis`, `run_classifiers`, and all plot generation to Modal containers with automatic scaling. Cold start is approximately 3 seconds; subsequent calls parallelise across specifications.
+
+See [Modal cloud deployment](/deployment/modal-cloud) for setup instructions.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core concepts" icon="lightbulb" href="/concepts">
+    Understand multiverse analysis, FDR correction, and the robustness % in depth.
+  </Card>
+  <Card title="Interpreting results" icon="chart-line" href="/guides/interpreting-results">
+    Learn how to read the specification curve, DAGs, and classifier output.
+  </Card>
+  <Card title="Statistical methods" icon="function" href="/methods/multiverse-analysis">
+    Read the full documentation on every model family and assumption check.
+  </Card>
+  <Card title="API reference" icon="code" href="/api/overview">
+    Integrate Omniverse into your own pipelines via the REST API.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
